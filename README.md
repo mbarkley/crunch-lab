@@ -18,9 +18,13 @@ Crunch Lab is a visual, browser-based workbench for modeling probabilities of di
 - **Editor direction:** a guided sequence, not a free-form node canvas. Each attack will receive a visible enemy state, select the relevant roll path, and visibly pass hit/miss state to the next attack.
 - **Reference design:** [guided-sequence-mockup.html](design/guided-sequence-mockup.html). It is a static, nonfunctional design reference.
 
+## Working now
+
+The first functional editor models a sequence of independent attacks. Each attack configures a raw d20 threshold and damage as a dice count, common die size, and modifier. The interface reports hit chance, expected damage per attack, and total expected damage as values change.
+
 ## Deferred
 
-This scaffold deliberately does **not** include a game-domain model, probability calculator, editable event forms, persistence, import/export, charts, accounts, or a backend. Those decisions will be made in later iterations.
+State passed between attacks, advantage and disadvantage, critical hits, persistence, import/export, full probability charts, accounts, and a backend remain deferred.
 
 ## Development
 

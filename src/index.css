@@ -1,6 +1,7 @@
 :root {
+  color-scheme: light;
   color: #1f2933;
-  background: #f4f6f8;
+  background: linear-gradient(180deg, #f7f8fa 0%, #f1f3f6 100%);
   font-family:
     Inter,
     ui-sans-serif,
@@ -14,10 +15,13 @@
 * {
   box-sizing: border-box;
 }
+
 body {
   margin: 0;
   min-width: 320px;
+  min-height: 100vh;
 }
-a {
-  color: inherit;
+
+button {
+  font-family: inherit;
 }
