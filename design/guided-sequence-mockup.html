@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rollflow — UI directions</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #202a35;
+        --muted: #697582;
+        --line: #dbe1e7;
+        --canvas: #f4f6f8;
+        --paper: #fff;
+        --violet: #7156cc;
+        --violet-pale: #f0ecff;
+        --green: #198754;
+        --green-pale: #e8f7ef;
+        --rose: #b94a62;
+        --rose-pale: #fff0f2;
+        --gold: #b8791c;
+        --gold-pale: #fff7e7;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--canvas);
+        color: var(--ink);
+        font:
+          14px/1.4 Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+      }
+      header {
+        max-width: 1440px;
+        margin: auto;
+        padding: 48px 46px 30px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+      }
+      h1 {
+        font-size: 29px;
+        letter-spacing: -0.035em;
+        margin: 0 0 7px;
+      }
+      h2 {
+        font-size: 17px;
+        letter-spacing: -0.02em;
+        margin: 0;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .scenario {
+        max-width: 460px;
+        font-size: 14px;
+      }
+      .badge {
+        white-space: nowrap;
+        background: var(--violet-pale);
+        color: var(--violet);
+        border-radius: 999px;
+        padding: 7px 10px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      main {
+        max-width: 1440px;
+        margin: auto;
+        padding: 0 46px 52px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 22px;
+      }
+      .concept {
+        min-width: 0;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        overflow: hidden;
+        box-shadow: 0 8px 22px rgba(33, 45, 56, 0.05);
+      }
+      .concept-head {
+        padding: 19px 20px 17px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .concept-head p {
+        font-size: 12px;
+        margin-top: 3px;
+      }
+      .mock {
+        height: 440px;
+        padding: 20px;
+        background: #fbfcfd;
+        overflow: hidden;
+      }
+      .footer {
+        padding: 13px 20px;
+        border-top: 1px solid var(--line);
+        background: #fff;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .total {
+        color: var(--ink);
+        font-weight: 750;
+      }
+      .legend {
+        display: flex;
+        gap: 9px;
+        align-items: center;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        display: inline-block;
+        border-radius: 50%;
+        margin-right: 3px;
+      }
+      .lanes {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 8px;
+        position: relative;
+        height: 100%;
+      }
+      .attack {
+        position: relative;
+        min-width: 0;
+        padding-top: 0;
+      }
+      .attack:not(:last-child)::after {
+        content: '→';
+        color: #aab4bf;
+        position: absolute;
+        right: -8px;
+        top: 75px;
+        z-index: 2;
+        font-size: 17px;
+      }
+      .num {
+        font-size: 10px;
+        color: var(--muted);
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        margin: 0 0 7px;
+      }
+      .box {
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 8px;
+        padding: 9px 8px;
+        margin-bottom: 7px;
+        font-size: 11px;
+        line-height: 1.25;
+      }
+      .roll {
+        border-color: #cec4f4;
+        background: #faf9ff;
+      }
+      .roll strong {
+        color: var(--violet);
+        display: block;
+        margin-bottom: 2px;
+      }
+      .condition {
+        border-left: 3px solid var(--gold);
+      }
+      .branches {
+        margin-left: 7px;
+        display: grid;
+        gap: 5px;
+      }
+      .branch {
+        padding: 7px;
+        border-radius: 7px;
+        font-size: 10px;
+      }
+      .hit {
+        color: #176b45;
+        background: var(--green-pale);
+        border-left: 3px solid var(--green);
+      }
+      .miss {
+        color: #9a3c51;
+        background: var(--rose-pale);
+        border-left: 3px solid var(--rose);
+      }
+      .vex {
+        color: #5944a8;
+        background: var(--violet-pale);
+        border: 1px dashed #b9a9ed;
+      }
+      .lane-note {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        text-align: center;
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .canvas {
+        position: relative;
+        height: 100%;
+        border-radius: 9px;
+        background-image: radial-gradient(#dbe2e9 1px, transparent 1px);
+        background-size: 13px 13px;
+      }
+      .canvas svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+      .node {
+        position: absolute;
+        min-width: 75px;
+        padding: 8px 9px;
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(33, 45, 56, 0.06);
+        font-size: 10px;
+        text-align: center;
+      }
+      .node b {
+        display: block;
+        font-size: 10px;
+        margin-bottom: 2px;
+      }
+      .node.roll-node {
+        border-color: #cbbff6;
+      }
+      .node.condition-node {
+        border-color: #efd59e;
+      }
+      .node.state-node {
+        border-color: #b7dfc9;
+        background: #f4fcf7;
+      }
+      .node.damage-node {
+        border-color: #b7dfc9;
+      }
+      .n1 {
+        left: 4%;
+        top: 28px;
+      }
+      .n2 {
+        left: 36%;
+        top: 28px;
+      }
+      .n3 {
+        left: 68%;
+        top: 28px;
+      }
+      .n4 {
+        left: 4%;
+        top: 195px;
+      }
+      .n5 {
+        left: 36%;
+        top: 195px;
+      }
+      .n6 {
+        left: 68%;
+        top: 195px;
+      }
+      .n7 {
+        left: 36%;
+        top: 317px;
+      }
+      .edge-label {
+        position: absolute;
+        z-index: 3;
+        padding: 2px 5px;
+        border-radius: 4px;
+        background: #fbfcfd;
+        color: var(--muted);
+        font-size: 9px;
+      }
+      .e1 {
+        left: 26%;
+        top: 58px;
+      }
+      .e2 {
+        left: 59%;
+        top: 58px;
+        color: var(--green);
+      }
+      .e3 {
+        left: 54%;
+        top: 157px;
+        color: var(--violet);
+      }
+      .e4 {
+        left: 26%;
+        top: 226px;
+      }
+      .e5 {
+        left: 59%;
+        top: 226px;
+        color: var(--green);
+      }
+      .stepper {
+        display: grid;
+        gap: 8px;
+      }
+      .step {
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 9px;
+        padding: 10px;
+        display: grid;
+        grid-template-columns: 28px 1fr auto;
+        align-items: center;
+        gap: 9px;
+      }
+      .step-num {
+        width: 25px;
+        height: 25px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--violet-pale);
+        color: var(--violet);
+        font-size: 11px;
+        font-weight: 800;
+      }
+      .step-title {
+        font-weight: 750;
+        font-size: 12px;
+      }
+      .step-desc {
+        color: var(--muted);
+        font-size: 10px;
+        margin-top: 2px;
+      }
+      .pill {
+        font-size: 10px;
+        padding: 4px 6px;
+        border-radius: 5px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .pill.normal {
+        color: #6850bd;
+        background: var(--violet-pale);
+      }
+      .pill.adv {
+        color: #176b45;
+        background: var(--green-pale);
+      }
+      .rule {
+        margin: 16px 0 0 37px;
+        padding: 8px 9px;
+        border-left: 3px solid var(--green);
+        background: var(--green-pale);
+        border-radius: 0 7px 7px 0;
+        color: #176b45;
+        font-size: 10px;
+      }
+      .results {
+        margin-top: 16px;
+        margin-left: 37px;
+        display: flex;
+        gap: 6px;
+      }
+      .result {
+        flex: 1;
+        padding: 7px;
+        background: #f7f8fa;
+        border-radius: 7px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .result strong {
+        display: block;
+        font-size: 13px;
+        color: var(--ink);
+        margin-top: 1px;
+      }
+      @media (max-width: 1100px) {
+        main {
+          grid-template-columns: 1fr;
+          max-width: 620px;
+        }
+        .mock {
+          height: 390px;
+        }
+      }
+      @media (max-width: 600px) {
+        header,
+        main {
+          padding-left: 16px;
+          padding-right: 16px;
+        }
+        header {
+          display: block;
+          padding-top: 28px;
+        }
+        .badge {
+          display: inline-block;
+          margin-top: 14px;
+        }
+        .lanes {
+          gap: 4px;
+        }
+        .box {
+          padding: 6px 4px;
+          font-size: 9px;
+        }
+        .branches {
+          margin-left: 2px;
+        }
+        .branch {
+          padding: 5px;
+          font-size: 9px;
+        }
+      }
+      .state-in {
+        margin-bottom: 7px;
+        padding: 6px;
+        border-radius: 7px;
+        font-size: 9px;
+        font-weight: 800;
+        text-align: center;
+        line-height: 1.2;
+      }
+      .state-in.start,
+      .state-in.clear {
+        color: #8f3a4d;
+        background: var(--rose-pale);
+        border: 1px solid #efc8d0;
+      }
+      .state-in.mixed {
+        color: #4e3b97;
+        background: var(--violet-pale);
+        border: 1px solid #cfc3f7;
+      }
+      .roll-path {
+        display: grid;
+        gap: 4px;
+        padding: 5px;
+        margin-bottom: 7px;
+        border-left: 2px solid #c9d1d9;
+      }
+      .roll-path .box {
+        margin: 0;
+        padding: 6px 5px;
+        font-size: 9px;
+      }
+      .normal-roll {
+        border-color: #ebc6ce;
+        background: #fff8f9;
+      }
+      .normal-roll strong {
+        color: #a54559;
+      }
+      .adv-roll {
+        border-color: #c9bdf6;
+        background: #f9f7ff;
+      }
+      .adv-roll strong {
+        color: var(--violet);
+      }
+      .path-state {
+        font-size: 10px;
+        font-weight: 800;
+        margin-bottom: 5px;
+        color: #4f3c99;
+      }
+      .path-options {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 5px;
+      }
+      .path {
+        border-radius: 6px;
+        padding: 5px;
+        font-size: 9px;
+        line-height: 1.25;
+      }
+      .path b {
+        display: block;
+        margin-bottom: 1px;
+      }
+      .path.vexed {
+        background: var(--green-pale);
+        color: #176b45;
+        border: 1px solid #b7dfc9;
+      }
+      .path.clear {
+        background: var(--rose-pale);
+        color: #9a3c51;
+        border: 1px solid #efc8d0;
+      }
+      .state-out {
+        margin-left: 33px;
+        display: flex;
+        gap: 5px;
+        align-items: center;
+        font-size: 9px;
+        color: var(--muted);
+      }
+      .state-out:before {
+        content: '↓';
+        color: #aab4bf;
+        font-size: 13px;
+      }
+      .outcome {
+        padding: 3px 5px;
+        border-radius: 4px;
+        font-weight: 800;
+      }
+      .outcome.hit-state {
+        background: var(--green-pale);
+        color: #176b45;
+      }
+      .outcome.miss-state {
+        background: var(--rose-pale);
+        color: #9a3c51;
+      }
+      .decision {
+        display: inline-block;
+        padding: 7px 9px;
+        background: #fbfaff;
+        border: 2px solid #c7b9f2;
+        border-radius: 7px;
+        color: #4f3c99;
+        font-weight: 800;
+        font-size: 10px;
+      }
+      .canvas-flow {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        align-items: center;
+        height: 100%;
+        padding: 9px;
+      }
+      .flow-col {
+        display: grid;
+        gap: 9px;
+        align-content: center;
+      }
+      .flow-node {
+        padding: 9px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: #fff;
+        font-size: 10px;
+        text-align: center;
+      }
+      .flow-node b {
+        display: block;
+        margin-bottom: 2px;
+      }
+      .flow-node.vex {
+        border-color: #b7dfc9;
+        background: var(--green-pale);
+        color: #176b45;
+      }
+      .flow-node.clear {
+        border-color: #efc8d0;
+        background: var(--rose-pale);
+        color: #9a3c51;
+      }
+      .flow-node.roll {
+        border-color: #c9bdf6;
+      }
+      .flow-arrow {
+        text-align: center;
+        color: #aab4bf;
+        font-size: 13px;
+      }
+      .flow-branches {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 5px;
+      }
+      .flow-label {
+        font-size: 9px;
+        font-weight: 800;
+        padding: 4px;
+        border-radius: 5px;
+      }
+      .flow-label.vex {
+        background: var(--green-pale);
+        color: #176b45;
+      }
+      .flow-label.clear {
+        background: var(--rose-pale);
+        color: #9a3c51;
+      }
+      .flow-repeat {
+        grid-column: 1/-1;
+        text-align: center;
+        color: var(--muted);
+        font-size: 10px;
+        border-top: 1px dashed var(--line);
+        padding-top: 10px;
+      }
+      main {
+        display: block;
+        max-width: 680px;
+      }
+      .concept {
+        margin: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Which editing model feels right?</h1>
+        <p class="scenario">
+          Five attacks against one enemy. Hit on 12+, deal 1d8 damage. A hit
+          applies Vex, so the next attack rolls 2d20 and keeps the highest.
+        </p>
+      </div>
+      <span class="badge">Static UI directions</span>
+    </header>
+    <main>
+      <section class="concept" aria-labelledby="sequence-title">
+        <div class="concept-head">
+          <div>
+            <h2 id="sequence-title">3. Guided sequence</h2>
+            <p>State and roll paths in each step</p>
+          </div>
+          <span class="badge">Simplest</span>
+        </div>
+        <div class="mock">
+          <div class="stepper">
+            <div class="step">
+              <span class="step-num">1</span>
+              <div>
+                <div class="path-state">Enemy starts: Not vexed</div>
+                <div class="path-options">
+                  <div class="path clear"><b>Not vexed</b>Roll 1d20</div>
+                  <div class="path vexed"><b>Vexed</b>Not possible yet</div>
+                </div>
+              </div>
+            </div>
+            <div class="state-out">
+              <span class="outcome hit-state">hit → Vexed</span
+              ><span class="outcome miss-state">miss → Not vexed</span>
+            </div>
+            <div class="step">
+              <span class="step-num">2</span>
+              <div>
+                <div class="path-state">Enemy state set by attack 1</div>
+                <div class="path-options">
+                  <div class="path vexed">
+                    <b>Vexed → advantage</b>Roll 2d20, highest
+                  </div>
+                  <div class="path clear">
+                    <b>Not vexed → normal</b>Roll 1d20
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="state-out">
+              <span class="outcome hit-state">hit → Vexed</span
+              ><span class="outcome miss-state">miss → Not vexed</span>
+            </div>
+            <div class="step">
+              <span class="step-num">3</span>
+              <div>
+                <div class="path-state">Enemy state set by attack 2</div>
+                <div class="path-options">
+                  <div class="path vexed">
+                    <b>Vexed → advantage</b>Roll 2d20, highest
+                  </div>
+                  <div class="path clear">
+                    <b>Not vexed → normal</b>Roll 1d20
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="state-out">
+              <span class="outcome hit-state">hit → Vexed</span
+              ><span class="outcome miss-state">miss → Not vexed</span>
+            </div>
+            <div class="step">
+              <span class="step-num">4</span>
+              <div>
+                <div class="path-state">Enemy state set by attack 3</div>
+                <div class="path-options">
+                  <div class="path vexed">
+                    <b>Vexed → advantage</b>Roll 2d20, highest
+                  </div>
+                  <div class="path clear">
+                    <b>Not vexed → normal</b>Roll 1d20
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="state-out">
+              <span class="outcome hit-state">hit → Vexed</span
+              ><span class="outcome miss-state">miss → Not vexed</span>
+            </div>
+            <div class="step">
+              <span class="step-num">5</span>
+              <div>
+                <div class="path-state">Enemy state set by attack 4</div>
+                <div class="path-options">
+                  <div class="path vexed">
+                    <b>Vexed → advantage</b>Roll 2d20, highest
+                  </div>
+                  <div class="path clear">
+                    <b>Not vexed → normal</b>Roll 1d20
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="state-out">
+              <span class="outcome hit-state">hit → 1d8</span
+              ><span class="outcome miss-state">miss → no damage</span>
+            </div>
+            <div class="results">
+              <div class="result">Attacks<strong>5</strong></div>
+              <div class="result">Avg. hits<strong>2.79</strong></div>
+              <div class="result">Expected damage<strong>12.57</strong></div>
+            </div>
+          </div>
+        </div>
+        <div class="footer">
+          <span>State is explicit without leaving the sequence</span
+          ><span class="total">Expected damage 12.57</span>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

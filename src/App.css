@@ -1,0 +1,122 @@
+.app-shell {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 42px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+.brand svg {
+  color: #7156cc;
+}
+.status,
+.eyebrow {
+  color: #6650b8;
+  font-size: 0.75rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.status {
+  background: #f0ecff;
+  border-radius: 999px;
+  padding: 6px 10px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+.hero {
+  max-width: 690px;
+}
+.hero h1 {
+  margin: 8px 0 14px;
+  font-size: clamp(2.35rem, 7vw, 4.5rem);
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+.hero p:not(.eyebrow) {
+  max-width: 590px;
+  color: #66717d;
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+.workspace {
+  margin-top: 52px;
+  padding: 24px;
+  background: #fff;
+  border: 1px solid #dbe1e7;
+  border-radius: 16px;
+  box-shadow: 0 12px 30px rgba(33, 45, 56, 0.06);
+}
+.workspace-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+.workspace-heading svg {
+  color: #7156cc;
+}
+.workspace h2 {
+  margin: 4px 0 0;
+  font-size: 1.4rem;
+  letter-spacing: -0.03em;
+}
+.sequence-preview {
+  margin: 24px 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: steps;
+  display: grid;
+  gap: 10px;
+}
+.sequence-preview li {
+  counter-increment: steps;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #4c5865;
+}
+.sequence-preview li::before {
+  content: counter(steps);
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  background: #f0ecff;
+  color: #6049b2;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+.reference-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #5d46ab;
+  font-weight: 700;
+  text-decoration: none;
+}
+.reference-link:hover {
+  text-decoration: underline;
+}
+@media (max-width: 560px) {
+  .app-shell {
+    padding: 24px 16px 48px;
+  }
+  .masthead {
+    padding-bottom: 32px;
+  }
+  .workspace {
+    padding: 18px;
+  }
+}
