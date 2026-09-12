@@ -42,4 +42,4 @@ npm run format:check
 
 ## Deployment
 
-Pushes to `main` run the GitHub Pages workflow. In the GitHub repository settings, choose **GitHub Actions** as the Pages source. The Vite base path is configured for a project site at `/crunch-lab/`.
+GitHub Pages deployment is temporarily disabled. The Vite base path remains configured for a project site at `/crunch-lab/` for when deployment is restored.
