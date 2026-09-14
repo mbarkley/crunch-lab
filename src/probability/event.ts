@@ -57,6 +57,42 @@ export interface EnemySavingThrowConfig extends BaseSavingThrowConfig {
 export type SavingThrowConfig = PlayerSavingThrowConfig | EnemySavingThrowConfig
 export type EventConfig = AttackConfig | SavingThrowConfig
 
+export type Combatant = 'player' | 'enemy'
+export type ActivityType = 'action' | 'bonus-action'
+
+export interface CombatantState {
+  readonly vex: boolean
+  readonly sap: boolean
+}
+
+export interface SequenceState {
+  readonly player: CombatantState
+  readonly enemy: CombatantState
+}
+
+export interface ActivityConfig {
+  readonly id: string
+  readonly type: ActivityType
+  readonly owner: Combatant
+  readonly events: readonly EventConfig[]
+}
+
+export interface TurnConfig {
+  readonly id: string
+  readonly owner: Combatant
+  readonly activities: readonly ActivityConfig[]
+}
+
+export interface RoundConfig {
+  readonly id: string
+  readonly turns: readonly TurnConfig[]
+}
+
+export interface SequenceConfig {
+  readonly initialState: SequenceState
+  readonly rounds: readonly RoundConfig[]
+}
+
 export interface ExpectedDamageAgainstEnemies {
   readonly type: 'expected-damage-against-enemies'
   readonly expectedDamage: number
@@ -91,19 +127,9 @@ export interface EventResult {
 }
 
 export interface SequenceResult {
-  readonly eventResults: readonly EventResult[]
+  readonly eventResults: Readonly<Record<string, EventResult>>
   readonly outcomes: readonly Outcome[]
   readonly expectedConditionApplications: readonly ExpectedConditionApplications[]
-}
-
-interface CombatantState {
-  readonly vex: boolean
-  readonly sap: boolean
-}
-
-interface SequenceState {
-  readonly player: CombatantState
-  readonly enemy: CombatantState
 }
 
 interface EventTransition {
@@ -126,7 +152,7 @@ const DAMAGE_CONSEQUENCES: readonly DamageConsequence[] = [
   'half',
   'full',
 ]
-const INITIAL_STATE: SequenceState = {
+export const INITIAL_SEQUENCE_STATE: SequenceState = {
   player: { vex: false, sap: false },
   enemy: { vex: false, sap: false },
 }
@@ -405,7 +431,10 @@ function resultFromTransitions(
 }
 
 function calculateSingleEvent(config: EventConfig) {
-  return resultFromTransitions(config, eventTransitions(config, INITIAL_STATE))
+  return resultFromTransitions(
+    config,
+    eventTransitions(config, INITIAL_SEQUENCE_STATE),
+  )
 }
 
 export function calculateAttack(config: AttackConfig): EventResult {
@@ -420,21 +449,61 @@ export function calculateEvent(config: EventConfig): EventResult {
   return calculateSingleEvent(config)
 }
 
-export function calculateSequence(
-  events: readonly EventConfig[],
-): SequenceResult {
-  let states = Distribution.constant(INITIAL_STATE, stateKey)
-  const eventResults: EventResult[] = []
+function assertUniqueId(id: string, kind: string, ids: Set<string>) {
+  if (id.length === 0) throw new RangeError(`${kind} ID must not be empty`)
+  if (ids.has(id)) throw new RangeError(`Duplicate ID: ${id}`)
+  ids.add(id)
+}
+
+function validateSequence(config: SequenceConfig) {
+  const ids = new Set<string>()
+  for (const round of config.rounds) {
+    assertUniqueId(round.id, 'Round', ids)
+    for (const turn of round.turns) {
+      assertUniqueId(turn.id, 'Turn', ids)
+      if (turn.owner !== 'player' && turn.owner !== 'enemy') {
+        throw new RangeError('Turn owner must be player or enemy')
+      }
+      for (const activity of turn.activities) {
+        assertUniqueId(activity.id, 'Activity', ids)
+        if (activity.type !== 'action' && activity.type !== 'bonus-action') {
+          throw new RangeError('Activity type must be action or bonus-action')
+        }
+        if (activity.owner !== turn.owner) {
+          throw new RangeError(
+            `Activity ${activity.id} owner must match turn ${turn.id} owner`,
+          )
+        }
+        for (const event of activity.events) {
+          assertUniqueId(event.id, 'Event', ids)
+        }
+      }
+    }
+  }
+}
+
+function sequenceEvents(config: SequenceConfig) {
+  return config.rounds.flatMap((round) =>
+    round.turns.flatMap((turn) =>
+      turn.activities.flatMap((activity) => activity.events),
+    ),
+  )
+}
+
+export function calculateSequence(config: SequenceConfig): SequenceResult {
+  validateSequence(config)
+  let states = Distribution.constant(config.initialState, stateKey)
+  const eventResults: Record<string, EventResult> = {}
   const totals = new Map<Outcome['type'], number>()
   const conditionTotals = new Map<string, ExpectedConditionApplications>()
 
-  for (const event of events) {
+  for (const event of sequenceEvents(config)) {
     const transitions = states.flatMap(
       (state) => eventTransitions(event, state),
       transitionKey,
     )
     const result = resultFromTransitions(event, transitions)
-    eventResults.push(result)
+    eventResults[event.id] = result
     totals.set(
       result.outcome.type,
       (totals.get(result.outcome.type) ?? 0) + result.outcome.expectedDamage,
