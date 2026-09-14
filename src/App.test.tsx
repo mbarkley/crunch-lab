@@ -34,7 +34,11 @@ describe('App', () => {
     expect(within(attack).getByLabelText(/die size/i)).toHaveValue('8')
     expect(within(attack).getByLabelText(/^modifier$/i)).toHaveValue(0)
     expect(within(attack).getByText('45%')).toBeInTheDocument()
-    expect(screen.getAllByText('2.03')).toHaveLength(2)
+    const criticalChance = within(attack)
+      .getByText('Critical chance')
+      .closest('span')!
+    expect(within(criticalChance).getByText('5%')).toBeInTheDocument()
+    expect(screen.getAllByText('2.25')).toHaveLength(2)
     expect(
       screen.queryByText(/expected damage against players/i),
     ).not.toBeInTheDocument()
@@ -149,20 +153,20 @@ describe('App', () => {
       [...attack.querySelectorAll('.attack-results strong')].map(
         (element) => element.textContent,
       ),
-    ).toEqual(['—', '—'])
+    ).toEqual(['—', '—', '—'])
 
     await user.type(diceCounts[1], '2')
     await user.selectOptions(dieSizes[1], '6')
     const modifier = within(attack).getByLabelText(/^modifier$/i)
     await user.clear(modifier)
     await user.type(modifier, '3')
-    expect(within(attack).getByText('6.53')).toBeInTheDocument()
+    expect(within(attack).getByText('7.1')).toBeInTheDocument()
 
     await user.click(
       within(attack).getByRole('button', { name: /remove damage pool 2/i }),
     )
     expect(within(attack).getAllByLabelText(/^dice$/i)).toHaveLength(1)
-    expect(within(attack).getByText('3.38')).toBeInTheDocument()
+    expect(within(attack).getByText('3.6')).toBeInTheDocument()
   })
 
   it('adds each event type with independent defaults', async () => {
@@ -215,8 +219,8 @@ describe('App', () => {
       selector: '.total-card span',
     })
     expect(totals).toHaveLength(2)
-    expect(screen.getByText('4.05')).toBeInTheDocument()
-    expect(screen.getByText('5.4')).toBeInTheDocument()
+    expect(screen.getByText('4.5')).toBeInTheDocument()
+    expect(screen.getByText('5.63')).toBeInTheDocument()
     expect(screen.getAllByText('4 events')).toHaveLength(2)
   })
 
@@ -265,11 +269,13 @@ describe('App', () => {
     await user.selectOptions(rollMode, 'advantage')
 
     expect(within(attack).getByText('69.75%')).toBeInTheDocument()
-    expect(within(attack).getByText('3.14')).toBeInTheDocument()
+    expect(within(attack).getByText('9.75%')).toBeInTheDocument()
+    expect(within(attack).getByText('3.58')).toBeInTheDocument()
 
     await user.selectOptions(rollMode, 'disadvantage')
     expect(within(attack).getByText('20.25%')).toBeInTheDocument()
-    expect(within(attack).getByText('0.91')).toBeInTheDocument()
+    expect(within(attack).getByText('0.25%')).toBeInTheDocument()
+    expect(within(attack).getByText('0.92')).toBeInTheDocument()
   })
 
   it('applies Vex to the next attack and aggregates its expected count', async () => {

@@ -47,9 +47,10 @@ describe('event calculations', () => {
     const result = calculateAttack(playerAttack())
 
     expect(result.successProbability).toBeCloseTo(0.45)
+    expect(result.criticalProbability).toBeCloseTo(0.05)
     expect(result.outcome).toEqual({
       type: 'expected-damage-against-enemies',
-      expectedDamage: 2.025,
+      expectedDamage: 2.25,
     })
     expect(result.conditionApplications).toEqual([])
   })
@@ -66,6 +67,37 @@ describe('event calculations', () => {
       calculateAttack(playerAttack({ rollMode: 'disadvantage' }))
         .successProbability,
     ).toBeCloseTo(0.2025)
+  })
+
+  it('reports critical probability for each attack roll mode', () => {
+    expect(
+      calculateAttack(playerAttack({ rollMode: 'normal' })).criticalProbability,
+    ).toBeCloseTo(0.05)
+    expect(
+      calculateAttack(playerAttack({ rollMode: 'advantage' }))
+        .criticalProbability,
+    ).toBeCloseTo(0.0975)
+    expect(
+      calculateAttack(playerAttack({ rollMode: 'disadvantage' }))
+        .criticalProbability,
+    ).toBeCloseTo(0.0025)
+  })
+
+  it('doubles every damage die on a critical and adds the modifier once', () => {
+    const result = calculateAttack(
+      playerAttack({
+        armorClass: 100,
+        damagePools: [
+          { diceCount: 1, dieSides: 4 },
+          { diceCount: 2, dieSides: 6 },
+        ],
+        damageModifier: -3,
+      }),
+    )
+
+    expect(result.successProbability).toBeCloseTo(0.05)
+    expect(result.criticalProbability).toBeCloseTo(0.05)
+    expect(result.outcome.expectedDamage).toBeCloseTo(0.8)
   })
 
   it('applies natural 1 and natural 20 rules to the selected attack die', () => {
@@ -167,6 +199,7 @@ describe('event calculations', () => {
 
     expect(sequence.eventResults[0].successProbability).toBeCloseTo(0.45)
     expect(sequence.eventResults[1].successProbability).toBeCloseTo(0.561375)
+    expect(sequence.eventResults[1].criticalProbability).toBeCloseTo(0.071375)
     expect(sequence.eventResults[2].successProbability).toBeCloseTo(
       0.5889403125,
     )
@@ -201,6 +234,7 @@ describe('event calculations', () => {
     ])
 
     expect(sequence.eventResults[1].successProbability).toBeCloseTo(0.338625)
+    expect(sequence.eventResults[1].criticalProbability).toBeCloseTo(0.028625)
     expect(sequence.eventResults[2].successProbability).toBeCloseTo(0.45)
   })
 
@@ -289,17 +323,15 @@ describe('event calculations', () => {
     ]
     const result = calculateSequence(events)
 
-    expect(result.eventResults[1].outcome.expectedDamage).toBeCloseTo(
-      0.561375 * 4.5,
-    )
+    expect(result.eventResults[1].outcome.expectedDamage).toBeCloseTo(2.847375)
     expect(result.outcomes).toEqual([
       {
         type: 'expected-damage-against-enemies',
-        expectedDamage: 4.5511875,
+        expectedDamage: 5.097375,
       },
       {
         type: 'expected-damage-against-players',
-        expectedDamage: 5.4,
+        expectedDamage: 5.625,
       },
     ])
   })
@@ -310,7 +342,7 @@ describe('event calculations', () => {
       outcomes: [
         {
           type: 'expected-damage-against-enemies',
-          expectedDamage: 2.025,
+          expectedDamage: 2.25,
         },
       ],
       expectedConditionApplications: [],
