@@ -82,9 +82,10 @@ describe('event calculations', () => {
     const result = calculateAttack(playerAttack())
 
     expect(result.successProbability).toBeCloseTo(0.45)
+    expect(result.criticalProbability).toBeCloseTo(0.05)
     expect(result.outcome).toEqual({
       type: 'expected-damage-against-enemies',
-      expectedDamage: 2.025,
+      expectedDamage: 2.25,
     })
     expect(result.conditionApplications).toEqual([])
   })
@@ -101,6 +102,37 @@ describe('event calculations', () => {
       calculateAttack(playerAttack({ rollMode: 'disadvantage' }))
         .successProbability,
     ).toBeCloseTo(0.2025)
+  })
+
+  it('reports critical probability for each attack roll mode', () => {
+    expect(
+      calculateAttack(playerAttack({ rollMode: 'normal' })).criticalProbability,
+    ).toBeCloseTo(0.05)
+    expect(
+      calculateAttack(playerAttack({ rollMode: 'advantage' }))
+        .criticalProbability,
+    ).toBeCloseTo(0.0975)
+    expect(
+      calculateAttack(playerAttack({ rollMode: 'disadvantage' }))
+        .criticalProbability,
+    ).toBeCloseTo(0.0025)
+  })
+
+  it('doubles every damage die on a critical and adds the modifier once', () => {
+    const result = calculateAttack(
+      playerAttack({
+        armorClass: 100,
+        damagePools: [
+          { diceCount: 1, dieSides: 4 },
+          { diceCount: 2, dieSides: 6 },
+        ],
+        damageModifier: -3,
+      }),
+    )
+
+    expect(result.successProbability).toBeCloseTo(0.05)
+    expect(result.criticalProbability).toBeCloseTo(0.05)
+    expect(result.outcome.expectedDamage).toBeCloseTo(0.8)
   })
 
   it('applies natural 1 and natural 20 rules to the selected attack die', () => {
@@ -350,11 +382,11 @@ describe('event calculations', () => {
     expect(result.outcomes).toEqual([
       {
         type: 'expected-damage-against-enemies',
-        expectedDamage: 4.5511875,
+        expectedDamage: 5.097375,
       },
       {
         type: 'expected-damage-against-players',
-        expectedDamage: 5.4,
+        expectedDamage: 5.625,
       },
     ])
   })
@@ -365,7 +397,7 @@ describe('event calculations', () => {
       outcomes: [
         {
           type: 'expected-damage-against-enemies',
-          expectedDamage: 2.025,
+          expectedDamage: 2.25,
         },
       ],
       expectedConditionApplications: [],
