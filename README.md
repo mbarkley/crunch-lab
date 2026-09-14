@@ -22,6 +22,8 @@ Crunch Lab is a visual, browser-based workbench for modeling probabilities of di
 
 The functional editor models an ordered sequence of player and enemy events. Attacks configure a target armor class, attack modifier, normal/advantage/disadvantage roll mode, and one or more damage dice pools with a shared modifier. Attack rolls follow the natural 1 miss and natural 20 hit rules.
 
+Events can be duplicated, deleted, and reordered with drag and drop or the move controls. An empty sequence offers all event types as starting points.
+
 Player and enemy saving throws configure a save DC, save modifier, one or more damage dice pools, and the damage taken on failure or success. A consequence can apply full damage, half the combined damage rounded down, or no damage.
 
 Attacks can add Vex or Sap to their target on a hit. Saving throws can add either condition to their target on failure, success, or both. Vex grants advantage to the next attack against its target, while Sap gives disadvantage to the next attack made by its target. Applicable conditions are consumed by that attack, and opposing advantage and disadvantage cancel.

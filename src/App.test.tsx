@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import App from './App'
@@ -41,7 +41,88 @@ describe('App', () => {
     expect(screen.getByText('1 event')).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: /remove event 1/i }),
-    ).toBeDisabled()
+    ).toBeEnabled()
+  })
+
+  it('allows an empty sequence and offers a one-click first event picker', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /remove event 1/i }))
+
+    expect(screen.queryByRole('article')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { name: /start your sequence/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText(/expected damage against/i),
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Enemy saving throw' }))
+
+    expect(
+      screen.getByRole('article', { name: /enemy saving throw/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('1 event')).toBeInTheDocument()
+  })
+
+  it('duplicates an event with all of its current settings', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    const original = screen.getByRole('article', { name: /player attack/i })
+    const armorClass = within(original).getByLabelText(/target ac/i)
+    await user.clear(armorClass)
+    await user.type(armorClass, '17')
+    await user.click(
+      within(original).getByRole('button', { name: /add dice pool/i }),
+    )
+    await addCondition(user, original, 'Vex')
+
+    await user.click(
+      within(original).getByRole('button', { name: /duplicate event 1/i }),
+    )
+
+    const copies = screen.getAllByRole('article', { name: /player attack/i })
+    expect(copies).toHaveLength(2)
+    expect(within(copies[1]).getByLabelText(/target ac/i)).toHaveValue(17)
+    expect(within(copies[1]).getAllByLabelText(/^dice$/i)).toHaveLength(2)
+    expect(within(copies[1]).getByText('Vex')).toBeInTheDocument()
+    const fieldIds = copies.flatMap((copy) =>
+      [...copy.querySelectorAll('input, select')].map((field) => field.id),
+    )
+    expect(new Set(fieldIds).size).toBe(fieldIds.length)
+  })
+
+  it('reorders events with controls and drag and drop', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await addEvent(user, 'Enemy attack')
+
+    await user.click(screen.getByRole('button', { name: /move event 2 up/i }))
+    expect(
+      screen
+        .getAllByRole('article')
+        .map((article) => within(article).getByRole('heading').textContent),
+    ).toEqual(['Enemy attack', 'Player attack'])
+
+    const dataTransfer = {
+      effectAllowed: '',
+      dropEffect: '',
+      setData: () => undefined,
+    }
+    const dragHandle = screen.getByRole('button', {
+      name: /drag to reorder event 1/i,
+    })
+    fireEvent.dragStart(dragHandle, { dataTransfer })
+    fireEvent.dragOver(screen.getAllByRole('article')[1], { dataTransfer })
+    fireEvent.drop(screen.getAllByRole('article')[1], { dataTransfer })
+
+    expect(
+      screen
+        .getAllByRole('article')
+        .map((article) => within(article).getByRole('heading').textContent),
+    ).toEqual(['Player attack', 'Enemy attack'])
   })
 
   it('adds, edits, and removes damage dice pools with one shared modifier', async () => {

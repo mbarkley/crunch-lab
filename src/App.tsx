@@ -1,5 +1,16 @@
-import { Calculator, Plus, Shield, Swords, Trash2, X } from 'lucide-react'
-import { useRef, useState } from 'react'
+import {
+  Calculator,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  GripVertical,
+  Plus,
+  Shield,
+  Swords,
+  Trash2,
+  X,
+} from 'lucide-react'
+import { type DragEvent, useRef, useState } from 'react'
 import type {
   AttackRollMode,
   ConditionConfig,
@@ -157,6 +168,35 @@ function createEvent(type: EventType, id: string): EventDraft {
     successConditions: [],
     ...createDefaultDamage(id),
   }
+}
+
+function duplicateEvent(
+  event: EventDraft,
+  id: string,
+  createDamagePoolId: () => string,
+): EventDraft {
+  return {
+    ...event,
+    id,
+    damagePools: event.damagePools.map((pool) => ({
+      ...pool,
+      id: createDamagePoolId(),
+    })),
+    ...(isAttackDraft(event)
+      ? {
+          hitConditions: event.hitConditions.map((condition) => ({
+            ...condition,
+          })),
+        }
+      : {
+          failureConditions: event.failureConditions.map((condition) => ({
+            ...condition,
+          })),
+          successConditions: event.successConditions.map((condition) => ({
+            ...condition,
+          })),
+        }),
+  } as EventDraft
 }
 
 function parseInteger(value: string) {
@@ -729,11 +769,31 @@ function configuredConditionTotals(
   return conditions.map((condition) => ({ condition, target }))
 }
 
+function EventTypeButtons({
+  onSelect,
+}: {
+  onSelect: (type: EventType) => void
+}) {
+  return (Object.keys(EVENT_LABELS) as EventType[]).map((type) => (
+    <button key={type} type="button" onClick={() => onSelect(type)}>
+      {type.includes('attack') ? (
+        <Swords aria-hidden="true" size={18} />
+      ) : (
+        <Shield aria-hidden="true" size={18} />
+      )}
+      {EVENT_LABELS[type]}
+    </button>
+  ))
+}
+
 function App() {
   const [events, setEvents] = useState<EventDraft[]>([
     createEvent('player-attack', 'event-1'),
   ])
   const [isChooserOpen, setChooserOpen] = useState(false)
+  const [draggedEventId, setDraggedEventId] = useState<string>()
+  const [dragOverEventId, setDragOverEventId] = useState<string>()
+  const [reorderAnnouncement, setReorderAnnouncement] = useState('')
   const nextEventId = useRef(2)
   const nextDamagePoolId = useRef(1)
   const evaluations = events.map(evaluateEvent)
@@ -822,6 +882,58 @@ function App() {
     setEvents((current) => current.filter((event) => event.id !== id))
   }
 
+  function copyEvent(id: string) {
+    const newId = `event-${nextEventId.current}`
+    nextEventId.current += 1
+    setEvents((current) => {
+      const index = current.findIndex((event) => event.id === id)
+      if (index === -1) return current
+      const copy = duplicateEvent(current[index], newId, () => {
+        const poolId = `damage-${nextDamagePoolId.current}`
+        nextDamagePoolId.current += 1
+        return poolId
+      })
+      const updated = [...current]
+      updated.splice(index + 1, 0, copy)
+      return updated
+    })
+  }
+
+  function moveEvent(fromIndex: number, toIndex: number) {
+    if (
+      fromIndex === toIndex ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= events.length ||
+      toIndex >= events.length
+    ) {
+      return
+    }
+    const movedLabel = EVENT_LABELS[events[fromIndex].type]
+    setEvents((current) => {
+      const updated = [...current]
+      const [moved] = updated.splice(fromIndex, 1)
+      updated.splice(toIndex, 0, moved)
+      return updated
+    })
+    setReorderAnnouncement(`${movedLabel} moved to position ${toIndex + 1}.`)
+  }
+
+  function dropEvent(targetId: string) {
+    if (!draggedEventId) return
+    const fromIndex = events.findIndex((event) => event.id === draggedEventId)
+    const toIndex = events.findIndex((event) => event.id === targetId)
+    moveEvent(fromIndex, toIndex)
+    setDraggedEventId(undefined)
+    setDragOverEventId(undefined)
+  }
+
+  function startDragging(event: DragEvent, id: string) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', id)
+    setDraggedEventId(id)
+  }
+
   return (
     <main className="app-shell">
       <header className="masthead">
@@ -899,6 +1011,10 @@ function App() {
           <span className="workspace-note">Events resolve in sequence</span>
         </div>
 
+        <p className="visually-hidden" aria-live="polite">
+          {reorderAnnouncement}
+        </p>
+
         <ol className="attack-list">
           {events.map((event, index) => {
             const evaluation = evaluations[index]
@@ -910,7 +1026,24 @@ function App() {
                 ? 'enemies'
                 : 'players'
             return (
-              <li className="attack-step" key={event.id}>
+              <li
+                className={`attack-step${draggedEventId === event.id ? ' is-dragging' : ''}${dragOverEventId === event.id && draggedEventId !== event.id ? ' is-drag-over' : ''}`}
+                key={event.id}
+                onDragOver={(dragEvent) => {
+                  dragEvent.preventDefault()
+                  dragEvent.dataTransfer.dropEffect = 'move'
+                  setDragOverEventId(event.id)
+                }}
+                onDragLeave={() =>
+                  setDragOverEventId((current) =>
+                    current === event.id ? undefined : current,
+                  )
+                }
+                onDrop={(dragEvent) => {
+                  dragEvent.preventDefault()
+                  dropEvent(event.id)
+                }}
+              >
                 <div className="step-marker" aria-hidden="true">
                   {index + 1}
                 </div>
@@ -925,15 +1058,62 @@ function App() {
                         {EVENT_LABELS[event.type]}
                       </h3>
                     </div>
-                    <button
-                      className="icon-button"
-                      type="button"
-                      aria-label={`Remove event ${index + 1}`}
-                      disabled={events.length === 1}
-                      onClick={() => removeEvent(event.id)}
-                    >
-                      <Trash2 aria-hidden="true" size={18} />
-                    </button>
+                    <div className="event-actions">
+                      <button
+                        className="drag-handle"
+                        type="button"
+                        draggable
+                        aria-label={`Drag to reorder event ${index + 1}`}
+                        title="Drag to reorder"
+                        onDragStart={(dragEvent) =>
+                          startDragging(dragEvent, event.id)
+                        }
+                        onDragEnd={() => {
+                          setDraggedEventId(undefined)
+                          setDragOverEventId(undefined)
+                        }}
+                      >
+                        <GripVertical aria-hidden="true" size={18} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        aria-label={`Move event ${index + 1} up`}
+                        title="Move up"
+                        disabled={index === 0}
+                        onClick={() => moveEvent(index, index - 1)}
+                      >
+                        <ChevronUp aria-hidden="true" size={18} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        aria-label={`Move event ${index + 1} down`}
+                        title="Move down"
+                        disabled={index === events.length - 1}
+                        onClick={() => moveEvent(index, index + 1)}
+                      >
+                        <ChevronDown aria-hidden="true" size={18} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        aria-label={`Duplicate event ${index + 1}`}
+                        title="Duplicate"
+                        onClick={() => copyEvent(event.id)}
+                      >
+                        <Copy aria-hidden="true" size={17} />
+                      </button>
+                      <button
+                        className="icon-button remove-event-button"
+                        type="button"
+                        aria-label={`Remove event ${index + 1}`}
+                        title="Delete"
+                        onClick={() => removeEvent(event.id)}
+                      >
+                        <Trash2 aria-hidden="true" size={18} />
+                      </button>
+                    </div>
                   </div>
 
                   <div className={isAttack ? 'attack-body' : 'saving-body'}>
@@ -1010,36 +1190,40 @@ function App() {
           })}
         </ol>
 
-        <div className="add-event">
-          <button
-            className="add-button"
-            type="button"
-            aria-expanded={isChooserOpen}
-            aria-controls="event-chooser"
-            onClick={() => setChooserOpen((current) => !current)}
-          >
-            {isChooserOpen ? (
-              <X aria-hidden="true" size={19} />
-            ) : (
-              <Plus aria-hidden="true" size={19} />
-            )}
-            {isChooserOpen ? 'Close' : 'Add event'}
-          </button>
-          {isChooserOpen && (
-            <div className="event-chooser" id="event-chooser">
-              {(Object.keys(EVENT_LABELS) as EventType[]).map((type) => (
-                <button key={type} type="button" onClick={() => addEvent(type)}>
-                  {type.includes('attack') ? (
-                    <Swords aria-hidden="true" size={18} />
-                  ) : (
-                    <Shield aria-hidden="true" size={18} />
-                  )}
-                  {EVENT_LABELS[type]}
-                </button>
-              ))}
+        {events.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <Plus aria-hidden="true" size={24} />
             </div>
-          )}
-        </div>
+            <h3>Start your sequence</h3>
+            <p>Choose the first event you want to model.</p>
+            <div className="empty-event-options">
+              <EventTypeButtons onSelect={addEvent} />
+            </div>
+          </div>
+        ) : (
+          <div className="add-event">
+            <button
+              className="add-button"
+              type="button"
+              aria-expanded={isChooserOpen}
+              aria-controls="event-chooser"
+              onClick={() => setChooserOpen((current) => !current)}
+            >
+              {isChooserOpen ? (
+                <X aria-hidden="true" size={19} />
+              ) : (
+                <Plus aria-hidden="true" size={19} />
+              )}
+              {isChooserOpen ? 'Close' : 'Add event'}
+            </button>
+            {isChooserOpen && (
+              <div className="event-chooser" id="event-chooser">
+                <EventTypeButtons onSelect={addEvent} />
+              </div>
+            )}
+          </div>
+        )}
       </section>
     </main>
   )
