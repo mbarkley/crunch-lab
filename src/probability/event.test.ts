@@ -10,6 +10,7 @@ import type {
   PlayerAttackConfig,
   PlayerSavingThrowConfig,
   SavingThrowConfig,
+  SequenceConfig,
 } from './event'
 
 const playerAttack = (
@@ -41,6 +42,40 @@ const playerSave = (
   successConditions: [],
   ...overrides,
 })
+
+const sequenceConfig = (
+  events: readonly (AttackConfig | SavingThrowConfig)[],
+  overrides: Partial<SequenceConfig> = {},
+): SequenceConfig => ({
+  initialState: {
+    player: { vex: false, sap: false },
+    enemy: { vex: false, sap: false },
+  },
+  rounds: [
+    {
+      id: 'round-1',
+      turns: [
+        {
+          id: 'turn-1',
+          owner: 'player',
+          activities: [
+            {
+              id: 'activity-1',
+              type: 'action',
+              owner: 'player',
+              events,
+            },
+          ],
+        },
+      ],
+    },
+  ],
+  ...overrides,
+})
+
+const calculateEventSequence = (
+  events: readonly (AttackConfig | SavingThrowConfig)[],
+) => calculateSequence(sequenceConfig(events))
 
 describe('event calculations', () => {
   it('calculates an AC-based player attack against enemies', () => {
@@ -159,18 +194,22 @@ describe('event calculations', () => {
   })
 
   it('applies Vex on hit and uses it for the next attack against that target', () => {
-    const sequence = calculateSequence([
+    const sequence = calculateEventSequence([
       playerAttack({ hitConditions: [{ type: 'vex' }] }),
       playerAttack({ id: 'attack-2', hitConditions: [{ type: 'vex' }] }),
       playerAttack({ id: 'attack-3' }),
     ])
 
-    expect(sequence.eventResults[0].successProbability).toBeCloseTo(0.45)
-    expect(sequence.eventResults[1].successProbability).toBeCloseTo(0.561375)
-    expect(sequence.eventResults[2].successProbability).toBeCloseTo(
+    expect(sequence.eventResults['attack-1'].successProbability).toBeCloseTo(
+      0.45,
+    )
+    expect(sequence.eventResults['attack-2'].successProbability).toBeCloseTo(
+      0.561375,
+    )
+    expect(sequence.eventResults['attack-3'].successProbability).toBeCloseTo(
       0.5889403125,
     )
-    expect(sequence.eventResults[1].conditionApplications).toEqual([
+    expect(sequence.eventResults['attack-2'].conditionApplications).toEqual([
       { condition: 'vex', probability: 0.561375 },
     ])
     expect(sequence.expectedConditionApplications).toEqual([
@@ -183,29 +222,37 @@ describe('event calculations', () => {
   })
 
   it('consumes Vex on the next applicable attack even when it misses', () => {
-    const sequence = calculateSequence([
+    const sequence = calculateEventSequence([
       playerAttack({ hitConditions: [{ type: 'vex' }] }),
       playerAttack({ id: 'attack-2' }),
       playerAttack({ id: 'attack-3' }),
     ])
 
-    expect(sequence.eventResults[1].successProbability).toBeCloseTo(0.561375)
-    expect(sequence.eventResults[2].successProbability).toBeCloseTo(0.45)
+    expect(sequence.eventResults['attack-2'].successProbability).toBeCloseTo(
+      0.561375,
+    )
+    expect(sequence.eventResults['attack-3'].successProbability).toBeCloseTo(
+      0.45,
+    )
   })
 
   it('applies Sap to the target and consumes it on that target’s next attack', () => {
-    const sequence = calculateSequence([
+    const sequence = calculateEventSequence([
       playerAttack({ hitConditions: [{ type: 'sap' }] }),
       { ...playerAttack({ id: 'attack-2' }), type: 'enemy-attack' },
       { ...playerAttack({ id: 'attack-3' }), type: 'enemy-attack' },
     ])
 
-    expect(sequence.eventResults[1].successProbability).toBeCloseTo(0.338625)
-    expect(sequence.eventResults[2].successProbability).toBeCloseTo(0.45)
+    expect(sequence.eventResults['attack-2'].successProbability).toBeCloseTo(
+      0.338625,
+    )
+    expect(sequence.eventResults['attack-3'].successProbability).toBeCloseTo(
+      0.45,
+    )
   })
 
   it('cancels advantage and disadvantage from manual and condition sources', () => {
-    const sequence = calculateSequence([
+    const sequence = calculateEventSequence([
       {
         ...playerSave({
           failureConditions: [{ type: 'vex' }],
@@ -216,7 +263,9 @@ describe('event calculations', () => {
       playerAttack({ id: 'attack-2', rollMode: 'disadvantage' }),
     ])
 
-    expect(sequence.eventResults[1].successProbability).toBeCloseTo(0.45)
+    expect(sequence.eventResults['attack-2'].successProbability).toBeCloseTo(
+      0.45,
+    )
   })
 
   it('applies save conditions on their separate branches and unions both branches', () => {
@@ -243,7 +292,7 @@ describe('event calculations', () => {
   })
 
   it('aggregates expected applications separately for each target', () => {
-    const result = calculateSequence([
+    const result = calculateEventSequence([
       playerSave({
         failureConditions: [{ type: 'vex' }],
         successConditions: [{ type: 'vex' }],
@@ -287,9 +336,9 @@ describe('event calculations', () => {
       { ...playerAttack({ id: 'attack-3' }), type: 'enemy-attack' },
       playerSave(),
     ]
-    const result = calculateSequence(events)
+    const result = calculateEventSequence(events)
 
-    expect(result.eventResults[1].outcome.expectedDamage).toBeCloseTo(
+    expect(result.eventResults['attack-2'].outcome.expectedDamage).toBeCloseTo(
       0.561375 * 4.5,
     )
     expect(result.outcomes).toEqual([
@@ -305,8 +354,8 @@ describe('event calculations', () => {
   })
 
   it('omits outcome and condition types that do not occur', () => {
-    expect(calculateSequence([playerAttack()])).toEqual({
-      eventResults: [calculateEvent(playerAttack())],
+    expect(calculateEventSequence([playerAttack()])).toEqual({
+      eventResults: { 'attack-1': calculateEvent(playerAttack()) },
       outcomes: [
         {
           type: 'expected-damage-against-enemies',
@@ -315,6 +364,109 @@ describe('event calculations', () => {
       ],
       expectedConditionApplications: [],
     })
+  })
+
+  it('uses the configured initial combatant state', () => {
+    const result = calculateSequence(
+      sequenceConfig([playerAttack()], {
+        initialState: {
+          player: { vex: false, sap: false },
+          enemy: { vex: true, sap: false },
+        },
+      }),
+    )
+
+    expect(result.eventResults['attack-1'].successProbability).toBeCloseTo(
+      0.6975,
+    )
+  })
+
+  it('traverses rounds, turns, and activities depth-first', () => {
+    const first = playerAttack({ hitConditions: [{ type: 'vex' }] })
+    const second = playerAttack({ id: 'attack-2' })
+    const result = calculateSequence({
+      initialState: {
+        player: { vex: false, sap: false },
+        enemy: { vex: false, sap: false },
+      },
+      rounds: [
+        {
+          id: 'round-1',
+          turns: [
+            {
+              id: 'player-turn-1',
+              owner: 'player',
+              activities: [
+                {
+                  id: 'action-1',
+                  type: 'action',
+                  owner: 'player',
+                  events: [first],
+                },
+                {
+                  id: 'bonus-action-1',
+                  type: 'bonus-action',
+                  owner: 'player',
+                  events: [],
+                },
+              ],
+            },
+            {
+              id: 'enemy-turn-1',
+              owner: 'enemy',
+              activities: [],
+            },
+          ],
+        },
+        {
+          id: 'round-2',
+          turns: [
+            {
+              id: 'player-turn-2',
+              owner: 'player',
+              activities: [
+                {
+                  id: 'action-2',
+                  type: 'action',
+                  owner: 'player',
+                  events: [second],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(Object.keys(result.eventResults)).toEqual(['attack-1', 'attack-2'])
+    expect(result.eventResults['attack-2'].successProbability).toBeCloseTo(
+      0.561375,
+    )
+  })
+
+  it('requires globally unique stable IDs', () => {
+    const config = sequenceConfig([playerAttack({ id: 'round-1' })])
+
+    expect(() => calculateSequence(config)).toThrow(/Duplicate ID: round-1/)
+  })
+
+  it('requires activity ownership to match its turn', () => {
+    const config = sequenceConfig([playerAttack()])
+    const mismatched: SequenceConfig = {
+      ...config,
+      rounds: config.rounds.map((round) => ({
+        ...round,
+        turns: round.turns.map((turn) => ({
+          ...turn,
+          activities: turn.activities.map((activity) => ({
+            ...activity,
+            owner: 'enemy',
+          })),
+        })),
+      })),
+    }
+
+    expect(() => calculateSequence(mismatched)).toThrow(/owner must match turn/)
   })
 
   it('rejects invalid event configurations', () => {

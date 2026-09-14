@@ -21,7 +21,11 @@ import type {
   EventResult,
   Outcome,
 } from './probability/event'
-import { calculateEvent, calculateSequence } from './probability/event'
+import {
+  calculateEvent,
+  calculateSequence,
+  INITIAL_SEQUENCE_STATE,
+} from './probability/event'
 import './App.css'
 
 const DAMAGE_DIE_SIDES = [4, 6, 8, 10, 12, 20] as const
@@ -799,7 +803,28 @@ function App() {
   const evaluations = events.map(evaluateEvent)
   const isSequenceValid = evaluations.every((evaluation) => evaluation.config)
   const sequence = isSequenceValid
-    ? calculateSequence(evaluations.map((evaluation) => evaluation.config!))
+    ? calculateSequence({
+        initialState: INITIAL_SEQUENCE_STATE,
+        rounds: [
+          {
+            id: 'round-1',
+            turns: [
+              {
+                id: 'turn-1',
+                owner: 'player',
+                activities: [
+                  {
+                    id: 'activity-1',
+                    type: 'action',
+                    owner: 'player',
+                    events: evaluations.map((evaluation) => evaluation.config!),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      })
     : undefined
   const shownOutcomeTypes = [...new Set(events.map(outcomeTypeFor))]
   const shownConditionTotals = [
@@ -1018,7 +1043,7 @@ function App() {
         <ol className="attack-list">
           {events.map((event, index) => {
             const evaluation = evaluations[index]
-            const result = sequence?.eventResults[index] ?? evaluation.result
+            const result = sequence?.eventResults[event.id] ?? evaluation.result
             const isAttack =
               event.type === 'player-attack' || event.type === 'enemy-attack'
             const target =
