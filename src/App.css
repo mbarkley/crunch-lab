@@ -144,6 +144,10 @@
   background: #d8d1ed;
 }
 
+.attack-step:has(.condition-chooser) {
+  z-index: 2;
+}
+
 .step-marker {
   position: relative;
   z-index: 1;
@@ -165,6 +169,10 @@
   border-radius: 15px;
   background: #fff;
   box-shadow: 0 8px 22px rgba(33, 45, 56, 0.05);
+}
+
+.attack-card:has(.condition-chooser) {
+  overflow: visible;
 }
 
 .attack-heading {
@@ -268,19 +276,100 @@
   padding: 0;
 }
 
+.damage-pools {
+  display: grid;
+  gap: 10px;
+  margin-top: 9px;
+}
+
+.damage-pool-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 8px;
+  align-items: end;
+  padding-left: 14px;
+}
+
 .damage-expression {
   display: grid;
-  grid-template-columns: minmax(82px, 1fr) auto minmax(92px, 1fr) auto minmax(
-      92px,
-      1fr
-    );
+  grid-template-columns: minmax(72px, 1fr) auto minmax(82px, 1fr);
   gap: 9px;
   align-items: end;
-  margin-top: 9px;
+}
+
+.pool-operator {
+  position: absolute;
+  bottom: 9px;
+  left: 0;
+  color: #7f8993;
+  font-weight: 780;
+}
+
+.damage-modifier-row {
+  display: grid;
+  grid-template-columns: auto minmax(92px, 140px);
+  gap: 9px;
+  align-items: end;
+  margin-top: 12px;
+  padding-left: 14px;
 }
 
 .field {
   min-width: 0;
+}
+
+.inline-icon-button {
+  width: 32px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #7b8793;
+  cursor: pointer;
+}
+
+.inline-icon-button:hover:not(:disabled) {
+  background: #fff0f2;
+  color: #a13f55;
+}
+
+.inline-icon-button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.secondary-add-button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px dashed #bcaee9;
+  border-radius: 8px;
+  background: #faf9ff;
+  color: #5e48aa;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 740;
+  cursor: pointer;
+}
+
+.secondary-add-button:hover:not(:disabled) {
+  border-style: solid;
+  background: #f0ecff;
+}
+
+.secondary-add-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.damage-section > .secondary-add-button {
+  margin: 10px 0 0 14px;
 }
 
 .field label {
@@ -474,14 +563,6 @@ input[aria-invalid='true'] {
     grid-template-columns: minmax(58px, 1fr) auto minmax(68px, 1fr);
   }
 
-  .damage-expression .operator:nth-of-type(2) {
-    display: none;
-  }
-
-  .damage-expression .field:last-child {
-    grid-column: 1 / 4;
-  }
-
   .attack-results {
     justify-content: stretch;
     padding: 10px 14px;
@@ -670,38 +751,63 @@ input[aria-invalid='true'] {
   font-weight: 720;
 }
 
-.condition-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.condition-entries {
+  display: grid;
+  gap: 7px;
 }
 
-.condition-option {
-  min-width: 84px;
-  min-height: 38px;
+.condition-entry {
+  min-height: 40px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 11px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px 0 11px;
   border: 1px solid #ded5bd;
   border-radius: 8px;
-  background: #fff;
+  background: #fff7e7;
   color: #625637;
   font-size: 0.78rem;
   font-weight: 720;
+}
+
+.condition-add {
+  position: relative;
+  margin-top: 8px;
+}
+
+.condition-chooser {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 170px;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid #d8cff6;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 26px rgba(33, 45, 56, 0.14);
+}
+
+.condition-chooser button {
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid #e2e6ea;
+  border-radius: 7px;
+  background: #fbfcfd;
+  color: #443189;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 720;
+  text-align: left;
   cursor: pointer;
 }
 
-.condition-option:has(input:checked) {
-  border-color: #b8791c;
-  background: #fff7e7;
-}
-
-.condition-option input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: #7156cc;
+.condition-chooser button:hover {
+  border-color: #bcaee9;
+  background: #f5f1ff;
 }
 
 .condition-total {

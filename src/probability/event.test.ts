@@ -21,8 +21,7 @@ const playerAttack = (
   attackModifier: 0,
   rollMode: 'normal',
   hitConditions: [],
-  damageDiceCount: 1,
-  damageDieSides: 8,
+  damagePools: [{ diceCount: 1, dieSides: 8 }],
   damageModifier: 0,
   ...overrides,
 })
@@ -34,8 +33,7 @@ const playerSave = (
   type: 'player-saving-throw',
   saveDc: 12,
   saveModifier: 0,
-  damageDiceCount: 1,
-  damageDieSides: 8,
+  damagePools: [{ diceCount: 1, dieSides: 8 }],
   damageModifier: 0,
   failureDamage: 'full',
   successDamage: 'half',
@@ -124,18 +122,46 @@ describe('event calculations', () => {
       calculateSavingThrow(
         playerSave({
           saveDc: 1,
-          damageDiceCount: 1,
-          damageDieSides: 4,
+          damagePools: [{ diceCount: 1, dieSides: 4 }],
           damageModifier: -2,
         }),
       ).outcome.expectedDamage,
     ).toBeCloseTo(0.25)
   })
 
+  it('sums damage pools before applying the shared modifier', () => {
+    const result = calculateSavingThrow(
+      playerSave({
+        saveDc: 21,
+        damagePools: [
+          { diceCount: 1, dieSides: 4 },
+          { diceCount: 1, dieSides: 6 },
+        ],
+        damageModifier: 3,
+      }),
+    )
+
+    expect(result.outcome.expectedDamage).toBe(9)
+  })
+
+  it('rounds half damage once after combining every damage pool', () => {
+    const result = calculateSavingThrow(
+      playerSave({
+        saveDc: 1,
+        damagePools: [
+          { diceCount: 1, dieSides: 4 },
+          { diceCount: 1, dieSides: 4 },
+        ],
+      }),
+    )
+
+    expect(result.outcome.expectedDamage).toBeCloseTo(2.25)
+  })
+
   it('applies Vex on hit and uses it for the next attack against that target', () => {
     const sequence = calculateSequence([
-      playerAttack({ hitConditions: ['vex'] }),
-      playerAttack({ id: 'attack-2', hitConditions: ['vex'] }),
+      playerAttack({ hitConditions: [{ type: 'vex' }] }),
+      playerAttack({ id: 'attack-2', hitConditions: [{ type: 'vex' }] }),
       playerAttack({ id: 'attack-3' }),
     ])
 
@@ -158,7 +184,7 @@ describe('event calculations', () => {
 
   it('consumes Vex on the next applicable attack even when it misses', () => {
     const sequence = calculateSequence([
-      playerAttack({ hitConditions: ['vex'] }),
+      playerAttack({ hitConditions: [{ type: 'vex' }] }),
       playerAttack({ id: 'attack-2' }),
       playerAttack({ id: 'attack-3' }),
     ])
@@ -169,7 +195,7 @@ describe('event calculations', () => {
 
   it('applies Sap to the target and consumes it on that target’s next attack', () => {
     const sequence = calculateSequence([
-      playerAttack({ hitConditions: ['sap'] }),
+      playerAttack({ hitConditions: [{ type: 'sap' }] }),
       { ...playerAttack({ id: 'attack-2' }), type: 'enemy-attack' },
       { ...playerAttack({ id: 'attack-3' }), type: 'enemy-attack' },
     ])
@@ -182,8 +208,8 @@ describe('event calculations', () => {
     const sequence = calculateSequence([
       {
         ...playerSave({
-          failureConditions: ['vex'],
-          successConditions: ['vex'],
+          failureConditions: [{ type: 'vex' }],
+          successConditions: [{ type: 'vex' }],
         }),
         type: 'enemy-saving-throw',
       },
@@ -196,8 +222,8 @@ describe('event calculations', () => {
   it('applies save conditions on their separate branches and unions both branches', () => {
     const branched = calculateSavingThrow(
       playerSave({
-        failureConditions: ['vex'],
-        successConditions: ['sap'],
+        failureConditions: [{ type: 'vex' }],
+        successConditions: [{ type: 'sap' }],
       }),
     )
     expect(branched.conditionApplications).toEqual([
@@ -207,8 +233,8 @@ describe('event calculations', () => {
 
     const guaranteed = calculateSavingThrow(
       playerSave({
-        failureConditions: ['vex'],
-        successConditions: ['vex'],
+        failureConditions: [{ type: 'vex' }],
+        successConditions: [{ type: 'vex' }],
       }),
     )
     expect(guaranteed.conditionApplications).toEqual([
@@ -219,19 +245,19 @@ describe('event calculations', () => {
   it('aggregates expected applications separately for each target', () => {
     const result = calculateSequence([
       playerSave({
-        failureConditions: ['vex'],
-        successConditions: ['vex'],
+        failureConditions: [{ type: 'vex' }],
+        successConditions: [{ type: 'vex' }],
       }),
       playerSave({
         id: 'save-2',
-        failureConditions: ['vex'],
-        successConditions: ['vex'],
+        failureConditions: [{ type: 'vex' }],
+        successConditions: [{ type: 'vex' }],
       }),
       {
         ...playerSave({
           id: 'save-3',
-          failureConditions: ['vex'],
-          successConditions: ['vex'],
+          failureConditions: [{ type: 'vex' }],
+          successConditions: [{ type: 'vex' }],
         }),
         type: 'enemy-saving-throw',
       },
@@ -245,7 +271,7 @@ describe('event calculations', () => {
 
   it('tracks Vex and Sap independently when both are applied', () => {
     const result = calculateAttack(
-      playerAttack({ hitConditions: ['vex', 'sap'] }),
+      playerAttack({ hitConditions: [{ type: 'vex' }, { type: 'sap' }] }),
     )
 
     expect(result.conditionApplications).toEqual([
@@ -256,7 +282,7 @@ describe('event calculations', () => {
 
   it('aggregates a stateful mixed sequence by outcome type', () => {
     const events: readonly (AttackConfig | SavingThrowConfig)[] = [
-      playerAttack({ hitConditions: ['vex'] }),
+      playerAttack({ hitConditions: [{ type: 'vex' }] }),
       playerAttack({ id: 'attack-2' }),
       { ...playerAttack({ id: 'attack-3' }), type: 'enemy-attack' },
       playerSave(),
@@ -309,5 +335,19 @@ describe('event calculations', () => {
         playerAttack({ rollMode: 'invalid' as PlayerAttackConfig['rollMode'] }),
       ),
     ).toThrow(/roll mode/)
+    expect(() => calculateAttack(playerAttack({ damagePools: [] }))).toThrow(
+      /at least one dice pool/,
+    )
+    expect(() =>
+      calculateAttack(
+        playerAttack({
+          hitConditions: [
+            {
+              type: 'invalid' as PlayerAttackConfig['hitConditions'][number]['type'],
+            },
+          ],
+        }),
+      ),
+    ).toThrow(/Condition/)
   })
 })

@@ -2,8 +2,9 @@ import { Calculator, Plus, Shield, Swords, Trash2, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import type {
   AttackRollMode,
-  Condition,
+  ConditionConfig,
   ConditionTarget,
+  ConditionType,
   DamageConsequence,
   EventConfig,
   EventResult,
@@ -29,8 +30,8 @@ const ATTACK_ROLL_MODES: readonly {
   { value: 'advantage', label: 'Advantage' },
   { value: 'disadvantage', label: 'Disadvantage' },
 ]
-const CONDITIONS: readonly Condition[] = ['vex', 'sap']
-const CONDITION_LABELS: Record<Condition, string> = {
+const CONDITION_TYPES: readonly ConditionType[] = ['vex', 'sap']
+const CONDITION_LABELS: Record<ConditionType, string> = {
   vex: 'Vex',
   sap: 'Sap',
 }
@@ -38,9 +39,14 @@ const CONDITION_LABELS: Record<Condition, string> = {
 type EventType = EventConfig['type']
 type OutcomeType = Outcome['type']
 
+interface DamagePoolDraft {
+  readonly id: string
+  readonly diceCount: string
+  readonly dieSides: string
+}
+
 interface DamageDraft {
-  readonly damageDiceCount: string
-  readonly damageDieSides: string
+  readonly damagePools: readonly DamagePoolDraft[]
   readonly damageModifier: string
 }
 
@@ -50,7 +56,7 @@ interface AttackDraft extends DamageDraft {
   readonly armorClass: string
   readonly attackModifier: string
   readonly rollMode: AttackRollMode
-  readonly hitConditions: readonly Condition[]
+  readonly hitConditions: readonly ConditionConfig[]
 }
 
 interface SavingThrowDraft extends DamageDraft {
@@ -60,13 +66,13 @@ interface SavingThrowDraft extends DamageDraft {
   readonly saveModifier: string
   readonly failureDamage: DamageConsequence
   readonly successDamage: DamageConsequence
-  readonly failureConditions: readonly Condition[]
-  readonly successConditions: readonly Condition[]
+  readonly failureConditions: readonly ConditionConfig[]
+  readonly successConditions: readonly ConditionConfig[]
 }
 
 type EventDraft = AttackDraft | SavingThrowDraft
 type EventField =
-  | keyof DamageDraft
+  | 'damageModifier'
   | 'armorClass'
   | 'attackModifier'
   | 'saveDc'
@@ -77,8 +83,22 @@ type EventField =
   | 'hitConditions'
   | 'failureConditions'
   | 'successConditions'
-type EventFieldValue = string | readonly Condition[]
-type EventErrors = Partial<Record<EventField, string>>
+type EventFieldValue = string | readonly ConditionConfig[]
+type DamagePoolField = 'diceCount' | 'dieSides'
+
+interface DamagePoolErrors {
+  diceCount?: string
+  dieSides?: string
+}
+
+interface EventErrors {
+  damagePools?: Readonly<Record<string, DamagePoolErrors>>
+  damageModifier?: string
+  armorClass?: string
+  attackModifier?: string
+  saveDc?: string
+  saveModifier?: string
+}
 
 interface EventEvaluation {
   readonly errors: EventErrors
@@ -86,10 +106,17 @@ interface EventEvaluation {
   readonly result?: EventResult
 }
 
-const DEFAULT_DAMAGE: DamageDraft = {
-  damageDiceCount: '1',
-  damageDieSides: '8',
-  damageModifier: '0',
+function createDefaultDamage(eventId: string): DamageDraft {
+  return {
+    damagePools: [
+      {
+        id: eventId + '-damage-0',
+        diceCount: '1',
+        dieSides: '8',
+      },
+    ],
+    damageModifier: '0',
+  }
 }
 
 const EVENT_LABELS: Record<EventType, string> = {
@@ -116,7 +143,7 @@ function createEvent(type: EventType, id: string): EventDraft {
       attackModifier: '0',
       rollMode: 'normal',
       hitConditions: [],
-      ...DEFAULT_DAMAGE,
+      ...createDefaultDamage(id),
     }
   }
   return {
@@ -128,7 +155,7 @@ function createEvent(type: EventType, id: string): EventDraft {
     successDamage: 'half',
     failureConditions: [],
     successConditions: [],
-    ...DEFAULT_DAMAGE,
+    ...createDefaultDamage(id),
   }
 }
 
@@ -143,25 +170,38 @@ function isAttackDraft(draft: EventDraft): draft is AttackDraft {
 }
 
 function evaluateEvent(draft: EventDraft): EventEvaluation {
-  const damageDiceCount = parseInteger(draft.damageDiceCount)
-  const damageDieSides = parseInteger(draft.damageDieSides)
   const damageModifier = parseInteger(draft.damageModifier)
+  const damagePoolErrors: Record<string, DamagePoolErrors> = {}
   const errors: EventErrors = {}
 
-  if (damageDiceCount === undefined || damageDiceCount < 1) {
-    errors.damageDiceCount = 'Enter a whole number of at least 1.'
+  for (const pool of draft.damagePools) {
+    const diceCount = parseInteger(pool.diceCount)
+    const dieSides = parseInteger(pool.dieSides)
+    const poolErrors: DamagePoolErrors = {}
+    if (diceCount === undefined || diceCount < 1) {
+      poolErrors.diceCount = 'Enter a whole number of at least 1.'
+    }
+    if (
+      dieSides === undefined ||
+      !DAMAGE_DIE_SIDES.includes(dieSides as (typeof DAMAGE_DIE_SIDES)[number])
+    ) {
+      poolErrors.dieSides = 'Choose an available die size.'
+    }
+    if (Object.keys(poolErrors).length > 0) {
+      damagePoolErrors[pool.id] = poolErrors
+    }
   }
-  if (
-    damageDieSides === undefined ||
-    !DAMAGE_DIE_SIDES.includes(
-      damageDieSides as (typeof DAMAGE_DIE_SIDES)[number],
-    )
-  ) {
-    errors.damageDieSides = 'Choose an available die size.'
+  if (Object.keys(damagePoolErrors).length > 0) {
+    errors.damagePools = damagePoolErrors
   }
   if (damageModifier === undefined) {
     errors.damageModifier = 'Enter a whole number.'
   }
+
+  const damagePools = draft.damagePools.map((pool) => ({
+    diceCount: parseInteger(pool.diceCount)!,
+    dieSides: parseInteger(pool.dieSides)!,
+  }))
 
   if (isAttackDraft(draft)) {
     const armorClass = parseInteger(draft.armorClass)
@@ -181,8 +221,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       attackModifier: attackModifier!,
       rollMode: draft.rollMode,
       hitConditions: draft.hitConditions,
-      damageDiceCount: damageDiceCount!,
-      damageDieSides: damageDieSides!,
+      damagePools,
       damageModifier: damageModifier!,
     }
     return { errors, config, result: calculateEvent(config) }
@@ -203,8 +242,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
     type: draft.type,
     saveDc: saveDc!,
     saveModifier: saveModifier!,
-    damageDiceCount: damageDiceCount!,
-    damageDieSides: damageDieSides!,
+    damagePools,
     damageModifier: damageModifier!,
     failureDamage: draft.failureDamage,
     successDamage: draft.successDamage,
@@ -226,7 +264,18 @@ interface FieldProps {
   update: (field: EventField, value: EventFieldValue) => void
 }
 
-function DamageFields({ event, errors, update }: FieldProps) {
+function DamageFields({
+  event,
+  errors,
+  update,
+  updatePool,
+  addPool,
+  removePool,
+}: FieldProps & {
+  updatePool: (poolId: string, field: DamagePoolField, value: string) => void
+  addPool: () => void
+  removePool: (poolId: string) => void
+}) {
   const prefix = event.id
   return (
     <fieldset className="damage-section">
@@ -235,54 +284,94 @@ function DamageFields({ event, errors, update }: FieldProps) {
           ? 'Damage on hit'
           : 'Damage roll'}
       </legend>
-      <div className="damage-expression">
-        <div className="field">
-          <label htmlFor={`${prefix}-dice-count`}>Dice</label>
-          <input
-            id={`${prefix}-dice-count`}
-            type="number"
-            inputMode="numeric"
-            min="1"
-            step="1"
-            value={event.damageDiceCount}
-            aria-invalid={Boolean(errors.damageDiceCount)}
-            aria-describedby={
-              errors.damageDiceCount ? `${prefix}-dice-count-error` : undefined
-            }
-            onChange={(change) =>
-              update('damageDiceCount', change.target.value)
-            }
-          />
-          {errors.damageDiceCount && (
-            <span className="field-error" id={`${prefix}-dice-count-error`}>
-              {errors.damageDiceCount}
-            </span>
-          )}
-        </div>
-        <span className="operator" aria-hidden="true">
-          d
-        </span>
-        <div className="field">
-          <label htmlFor={`${prefix}-die-sides`}>Die size</label>
-          <select
-            id={`${prefix}-die-sides`}
-            value={event.damageDieSides}
-            onChange={(change) => update('damageDieSides', change.target.value)}
-          >
-            {DAMAGE_DIE_SIDES.map((sides) => (
-              <option key={sides} value={sides}>
-                {sides}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div className="damage-pools">
+        {event.damagePools.map((pool, index) => {
+          const poolErrors = errors.damagePools?.[pool.id]
+          return (
+            <div className="damage-pool-row" key={pool.id}>
+              {index > 0 && (
+                <span className="pool-operator" aria-hidden="true">
+                  +
+                </span>
+              )}
+              <div className="damage-expression">
+                <div className="field">
+                  <label htmlFor={prefix + '-' + pool.id + '-dice-count'}>
+                    Dice
+                  </label>
+                  <input
+                    id={prefix + '-' + pool.id + '-dice-count'}
+                    type="number"
+                    inputMode="numeric"
+                    min="1"
+                    step="1"
+                    value={pool.diceCount}
+                    aria-invalid={Boolean(poolErrors?.diceCount)}
+                    aria-describedby={
+                      poolErrors?.diceCount
+                        ? prefix + '-' + pool.id + '-dice-count-error'
+                        : undefined
+                    }
+                    onChange={(change) =>
+                      updatePool(pool.id, 'diceCount', change.target.value)
+                    }
+                  />
+                  {poolErrors?.diceCount && (
+                    <span
+                      className="field-error"
+                      id={prefix + '-' + pool.id + '-dice-count-error'}
+                    >
+                      {poolErrors.diceCount}
+                    </span>
+                  )}
+                </div>
+                <span className="operator" aria-hidden="true">
+                  d
+                </span>
+                <div className="field">
+                  <label htmlFor={prefix + '-' + pool.id + '-die-sides'}>
+                    Die size
+                  </label>
+                  <select
+                    id={prefix + '-' + pool.id + '-die-sides'}
+                    value={pool.dieSides}
+                    onChange={(change) =>
+                      updatePool(pool.id, 'dieSides', change.target.value)
+                    }
+                  >
+                    {DAMAGE_DIE_SIDES.map((sides) => (
+                      <option key={sides} value={sides}>
+                        {sides}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <button
+                className="inline-icon-button"
+                type="button"
+                aria-label={'Remove damage pool ' + (index + 1)}
+                disabled={event.damagePools.length === 1}
+                onClick={() => removePool(pool.id)}
+              >
+                <Trash2 aria-hidden="true" size={16} />
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      <button className="secondary-add-button" type="button" onClick={addPool}>
+        <Plus aria-hidden="true" size={16} />
+        Add dice pool
+      </button>
+      <div className="damage-modifier-row">
         <span className="operator" aria-hidden="true">
           +
         </span>
         <div className="field">
-          <label htmlFor={`${prefix}-damage-modifier`}>Modifier</label>
+          <label htmlFor={prefix + '-damage-modifier'}>Modifier</label>
           <input
-            id={`${prefix}-damage-modifier`}
+            id={prefix + '-damage-modifier'}
             type="number"
             inputMode="numeric"
             step="1"
@@ -290,7 +379,7 @@ function DamageFields({ event, errors, update }: FieldProps) {
             aria-invalid={Boolean(errors.damageModifier)}
             aria-describedby={
               errors.damageModifier
-                ? `${prefix}-damage-modifier-error`
+                ? prefix + '-damage-modifier-error'
                 : undefined
             }
             onChange={(change) => update('damageModifier', change.target.value)}
@@ -298,7 +387,7 @@ function DamageFields({ event, errors, update }: FieldProps) {
           {errors.damageModifier && (
             <span
               className="field-error"
-              id={`${prefix}-damage-modifier-error`}
+              id={prefix + '-damage-modifier-error'}
             >
               {errors.damageModifier}
             </span>
@@ -488,43 +577,88 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
 type ConditionField =
   'hitConditions' | 'failureConditions' | 'successConditions'
 
-function toggledConditions(
-  selected: readonly Condition[],
-  condition: Condition,
-) {
-  return selected.includes(condition)
-    ? selected.filter((item) => item !== condition)
-    : [...selected, condition]
-}
-
 function ConditionChoices({
+  id,
   field,
   label,
   selected,
   update,
 }: {
+  id: string
   field: ConditionField
   label: string
-  selected: readonly Condition[]
+  selected: readonly ConditionConfig[]
   update: (field: EventField, value: EventFieldValue) => void
 }) {
+  const [isChooserOpen, setChooserOpen] = useState(false)
+  const availableConditions = CONDITION_TYPES.filter(
+    (type) => !selected.some((condition) => condition.type === type),
+  )
+  const chooserId = id + '-condition-chooser'
+
+  function addCondition(type: ConditionType) {
+    update(field, [...selected, { type }])
+    setChooserOpen(false)
+  }
+
+  function removeCondition(type: ConditionType) {
+    update(
+      field,
+      selected.filter((condition) => condition.type !== type),
+    )
+  }
+
   return (
-    <div className="condition-group">
+    <div className="condition-group" role="group" aria-label={label}>
       <span>{label}</span>
-      <div className="condition-options">
-        {CONDITIONS.map((condition) => (
-          <label className="condition-option" key={condition}>
-            <input
-              type="checkbox"
-              aria-label={`${CONDITION_LABELS[condition]} ${label}`}
-              checked={selected.includes(condition)}
-              onChange={() =>
-                update(field, toggledConditions(selected, condition))
-              }
-            />
-            {CONDITION_LABELS[condition]}
-          </label>
-        ))}
+      {selected.length > 0 && (
+        <div className="condition-entries">
+          {selected.map((condition) => (
+            <div className="condition-entry" key={condition.type}>
+              <span>{CONDITION_LABELS[condition.type]}</span>
+              <button
+                className="inline-icon-button"
+                type="button"
+                aria-label={
+                  'Remove ' + CONDITION_LABELS[condition.type] + ' ' + label
+                }
+                onClick={() => removeCondition(condition.type)}
+              >
+                <X aria-hidden="true" size={15} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="condition-add">
+        <button
+          className="secondary-add-button"
+          type="button"
+          aria-expanded={isChooserOpen}
+          aria-controls={chooserId}
+          disabled={availableConditions.length === 0}
+          onClick={() => setChooserOpen((current) => !current)}
+        >
+          {isChooserOpen ? (
+            <X aria-hidden="true" size={16} />
+          ) : (
+            <Plus aria-hidden="true" size={16} />
+          )}
+          {isChooserOpen ? 'Close' : 'Add condition'}
+        </button>
+        {isChooserOpen && (
+          <div className="condition-chooser" id={chooserId}>
+            {availableConditions.map((condition) => (
+              <button
+                key={condition}
+                type="button"
+                onClick={() => addCondition(condition)}
+              >
+                {CONDITION_LABELS[condition]}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -536,6 +670,7 @@ function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
       <fieldset className="condition-section">
         <legend>Conditions on hit</legend>
         <ConditionChoices
+          id={event.id + '-hit'}
           field="hitConditions"
           label="Apply to target"
           selected={event.hitConditions}
@@ -549,12 +684,14 @@ function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
       <legend>Conditions on target</legend>
       <div className="condition-groups">
         <ConditionChoices
+          id={event.id + '-failure'}
           field="failureConditions"
           label="On failure"
           selected={event.failureConditions}
           update={update}
         />
         <ConditionChoices
+          id={event.id + '-success'}
           field="successConditions"
           label="On success"
           selected={event.successConditions}
@@ -566,7 +703,7 @@ function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
 }
 
 interface ShownConditionTotal {
-  readonly condition: Condition
+  readonly condition: ConditionType
   readonly target: ConditionTarget
 }
 
@@ -582,8 +719,10 @@ function configuredConditionTotals(
   const conditions = [
     ...new Set(
       isAttackDraft(event)
-        ? event.hitConditions
-        : [...event.failureConditions, ...event.successConditions],
+        ? event.hitConditions.map((condition) => condition.type)
+        : [...event.failureConditions, ...event.successConditions].map(
+            (condition) => condition.type,
+          ),
     ),
   ]
   const target = conditionTargetFor(event)
@@ -596,6 +735,7 @@ function App() {
   ])
   const [isChooserOpen, setChooserOpen] = useState(false)
   const nextEventId = useRef(2)
+  const nextDamagePoolId = useRef(1)
   const evaluations = events.map(evaluateEvent)
   const isSequenceValid = evaluations.every((evaluation) => evaluation.config)
   const sequence = isSequenceValid
@@ -614,6 +754,59 @@ function App() {
     setEvents((current) =>
       current.map((event) =>
         event.id === id ? ({ ...event, [field]: value } as EventDraft) : event,
+      ),
+    )
+  }
+
+  function updateDamagePool(
+    eventId: string,
+    poolId: string,
+    field: DamagePoolField,
+    value: string,
+  ) {
+    setEvents((current) =>
+      current.map((event) =>
+        event.id === eventId
+          ? {
+              ...event,
+              damagePools: event.damagePools.map((pool) =>
+                pool.id === poolId ? { ...pool, [field]: value } : pool,
+              ),
+            }
+          : event,
+      ),
+    )
+  }
+
+  function addDamagePool(eventId: string) {
+    const id = 'damage-' + nextDamagePoolId.current
+    nextDamagePoolId.current += 1
+    setEvents((current) =>
+      current.map((event) =>
+        event.id === eventId
+          ? {
+              ...event,
+              damagePools: [
+                ...event.damagePools,
+                { id, diceCount: '1', dieSides: '8' },
+              ],
+            }
+          : event,
+      ),
+    )
+  }
+
+  function removeDamagePool(eventId: string, poolId: string) {
+    setEvents((current) =>
+      current.map((event) =>
+        event.id === eventId && event.damagePools.length > 1
+          ? {
+              ...event,
+              damagePools: event.damagePools.filter(
+                (pool) => pool.id !== poolId,
+              ),
+            }
+          : event,
       ),
     )
   }
@@ -766,6 +959,13 @@ function App() {
                       errors={evaluation.errors}
                       update={(field, value) =>
                         updateEvent(event.id, field, value)
+                      }
+                      updatePool={(poolId, field, value) =>
+                        updateDamagePool(event.id, poolId, field, value)
+                      }
+                      addPool={() => addDamagePool(event.id)}
+                      removePool={(poolId) =>
+                        removeDamagePool(event.id, poolId)
                       }
                     />
                     <ConditionFields

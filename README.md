@@ -20,11 +20,11 @@ Crunch Lab is a visual, browser-based workbench for modeling probabilities of di
 
 ## Working now
 
-The functional editor models an ordered sequence of player and enemy events. Attacks configure a target armor class, attack modifier, normal/advantage/disadvantage roll mode, and damage roll. Attack rolls follow the natural 1 miss and natural 20 hit rules.
+The functional editor models an ordered sequence of player and enemy events. Attacks configure a target armor class, attack modifier, normal/advantage/disadvantage roll mode, and one or more damage dice pools with a shared modifier. Attack rolls follow the natural 1 miss and natural 20 hit rules.
 
-Player and enemy saving throws configure a save DC, save modifier, damage roll, and the damage taken on failure or success. A consequence can apply full damage, half damage rounded down, or no damage.
+Player and enemy saving throws configure a save DC, save modifier, one or more damage dice pools, and the damage taken on failure or success. A consequence can apply full damage, half the combined damage rounded down, or no damage.
 
-Attacks can apply Vex or Sap to their target on a hit. Saving throws can apply either condition to their target on failure, success, or both. Vex grants advantage to the next attack against its target, while Sap gives disadvantage to the next attack made by its target. Applicable conditions are consumed by that attack, and opposing advantage and disadvantage cancel.
+Attacks can add Vex or Sap to their target on a hit. Saving throws can add either condition to their target on failure, success, or both. Vex grants advantage to the next attack against its target, while Sap gives disadvantage to the next attack made by its target. Applicable conditions are consumed by that attack, and opposing advantage and disadvantage cancel.
 
 Every event produces a typed outcome. The summary groups expected damage against enemies separately from expected damage against players, reports each event's condition application chance, and shows the expected number of times each configured condition is applied to players and enemies across the sequence.
 

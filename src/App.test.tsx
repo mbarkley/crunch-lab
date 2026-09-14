@@ -11,6 +11,17 @@ async function addEvent(
   await user.click(screen.getByRole('button', { name }))
 }
 
+async function addCondition(
+  user: ReturnType<typeof userEvent.setup>,
+  scope: HTMLElement,
+  name: string,
+) {
+  await user.click(
+    within(scope).getByRole('button', { name: /^add condition$/i }),
+  )
+  await user.click(within(scope).getByRole('button', { name }))
+}
+
 describe('App', () => {
   it('shows the default player attack and its live outcome', () => {
     render(<App />)
@@ -31,6 +42,46 @@ describe('App', () => {
     expect(
       screen.getByRole('button', { name: /remove event 1/i }),
     ).toBeDisabled()
+  })
+
+  it('adds, edits, and removes damage dice pools with one shared modifier', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    const attack = screen.getByRole('article', { name: /player attack/i })
+    expect(
+      within(attack).getByRole('button', { name: /remove damage pool 1/i }),
+    ).toBeDisabled()
+
+    await user.click(
+      within(attack).getByRole('button', { name: /add dice pool/i }),
+    )
+    const diceCounts = within(attack).getAllByLabelText(/^dice$/i)
+    const dieSizes = within(attack).getAllByLabelText(/die size/i)
+    expect(diceCounts).toHaveLength(2)
+    expect(diceCounts[1]).toHaveValue(1)
+    expect(dieSizes[1]).toHaveValue('8')
+
+    await user.clear(diceCounts[1])
+    expect(diceCounts[1]).toHaveAttribute('aria-invalid', 'true')
+    expect(
+      [...attack.querySelectorAll('.attack-results strong')].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(['—', '—'])
+
+    await user.type(diceCounts[1], '2')
+    await user.selectOptions(dieSizes[1], '6')
+    const modifier = within(attack).getByLabelText(/^modifier$/i)
+    await user.clear(modifier)
+    await user.type(modifier, '3')
+    expect(within(attack).getByText('6.53')).toBeInTheDocument()
+
+    await user.click(
+      within(attack).getByRole('button', { name: /remove damage pool 2/i }),
+    )
+    expect(within(attack).getAllByLabelText(/^dice$/i)).toHaveLength(1)
+    expect(within(attack).getByText('3.38')).toBeInTheDocument()
   })
 
   it('adds each event type with independent defaults', async () => {
@@ -146,10 +197,21 @@ describe('App', () => {
     await addEvent(user, 'Player attack')
 
     const attacks = screen.getAllByRole('article', { name: /player attack/i })
+    await addCondition(user, attacks[0], 'Vex')
+    const firstConditions = within(attacks[0]).getByRole('group', {
+      name: /apply to target/i,
+    })
     await user.click(
-      within(attacks[0]).getByRole('checkbox', {
-        name: /vex apply to target/i,
-      }),
+      within(firstConditions).getByRole('button', { name: /add condition/i }),
+    )
+    expect(
+      within(firstConditions).queryByRole('button', { name: 'Vex' }),
+    ).not.toBeInTheDocument()
+    expect(
+      within(firstConditions).getByRole('button', { name: 'Sap' }),
+    ).toBeInTheDocument()
+    await user.click(
+      within(firstConditions).getByRole('button', { name: /close/i }),
     )
 
     expect(within(attacks[1]).getByText('56.14%')).toBeInTheDocument()
@@ -162,13 +224,19 @@ describe('App', () => {
       .closest('aside')!
     expect(within(aggregate).getByText('0.45')).toBeInTheDocument()
 
-    await user.click(
-      within(attacks[1]).getByRole('checkbox', {
-        name: /vex apply to target/i,
-      }),
-    )
+    await addCondition(user, attacks[1], 'Vex')
     expect(within(aggregate).getByText('1.01')).toBeInTheDocument()
     expect(within(attacks[1]).getAllByText('56.14%')).toHaveLength(2)
+
+    await user.click(
+      within(attacks[0]).getByRole('button', {
+        name: /remove vex apply to target/i,
+      }),
+    )
+    const hitChance = within(attacks[1])
+      .getByText('Hit chance')
+      .closest('span')!
+    expect(within(hitChance).getByText('45%')).toBeInTheDocument()
   })
 
   it('groups expected condition applications by target', async () => {
@@ -177,16 +245,8 @@ describe('App', () => {
     await addEvent(user, 'Enemy attack')
 
     const attacks = screen.getAllByRole('article')
-    await user.click(
-      within(attacks[0]).getByRole('checkbox', {
-        name: /vex apply to target/i,
-      }),
-    )
-    await user.click(
-      within(attacks[1]).getByRole('checkbox', {
-        name: /vex apply to target/i,
-      }),
-    )
+    await addCondition(user, attacks[0], 'Vex')
+    await addCondition(user, attacks[1], 'Vex')
 
     const enemyTotal = screen
       .getByText(/expected vex applications to enemies/i)
@@ -204,12 +264,14 @@ describe('App', () => {
     await addEvent(user, 'Enemy saving throw')
 
     const save = screen.getByRole('article', { name: /enemy saving throw/i })
-    await user.click(
-      within(save).getByRole('checkbox', { name: /vex on failure/i }),
-    )
-    await user.click(
-      within(save).getByRole('checkbox', { name: /sap on success/i }),
-    )
+    const failureConditions = within(save).getByRole('group', {
+      name: /on failure/i,
+    })
+    const successConditions = within(save).getByRole('group', {
+      name: /on success/i,
+    })
+    await addCondition(user, failureConditions, 'Vex')
+    await addCondition(user, successConditions, 'Sap')
 
     const vexApplication = within(save)
       .getByText('Vex applied')

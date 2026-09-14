@@ -1,12 +1,18 @@
 import { Distribution, keepHighest, keepLowest, sumDice } from './distribution'
 
 export type AttackRollMode = 'normal' | 'advantage' | 'disadvantage'
-export type Condition = 'vex' | 'sap'
+export type ConditionType = 'vex' | 'sap'
+export type ConditionConfig =
+  { readonly type: 'vex' } | { readonly type: 'sap' }
 export type DamageConsequence = 'none' | 'half' | 'full'
 
+export interface DamagePoolConfig {
+  readonly diceCount: number
+  readonly dieSides: number
+}
+
 export interface DamageRollConfig {
-  readonly damageDiceCount: number
-  readonly damageDieSides: number
+  readonly damagePools: readonly DamagePoolConfig[]
   readonly damageModifier: number
 }
 
@@ -18,7 +24,7 @@ interface BaseAttackConfig extends BaseEventConfig {
   readonly armorClass: number
   readonly attackModifier: number
   readonly rollMode: AttackRollMode
-  readonly hitConditions: readonly Condition[]
+  readonly hitConditions: readonly ConditionConfig[]
 }
 
 export interface PlayerAttackConfig extends BaseAttackConfig {
@@ -36,8 +42,8 @@ interface BaseSavingThrowConfig extends BaseEventConfig {
   readonly saveModifier: number
   readonly failureDamage: DamageConsequence
   readonly successDamage: DamageConsequence
-  readonly failureConditions: readonly Condition[]
-  readonly successConditions: readonly Condition[]
+  readonly failureConditions: readonly ConditionConfig[]
+  readonly successConditions: readonly ConditionConfig[]
 }
 
 export interface PlayerSavingThrowConfig extends BaseSavingThrowConfig {
@@ -65,14 +71,14 @@ export type Outcome =
   ExpectedDamageAgainstEnemies | ExpectedDamageAgainstPlayers
 
 export interface ConditionApplication {
-  readonly condition: Condition
+  readonly condition: ConditionType
   readonly probability: number
 }
 
 export type ConditionTarget = 'players' | 'enemies'
 
 export interface ExpectedConditionApplications {
-  readonly condition: Condition
+  readonly condition: ConditionType
   readonly target: ConditionTarget
   readonly expectedApplications: number
 }
@@ -103,7 +109,7 @@ interface EventTransition {
   readonly state: SequenceState
   readonly success: boolean
   readonly expectedDamage: number
-  readonly appliedConditions: readonly Condition[]
+  readonly appliedConditions: readonly ConditionType[]
 }
 
 const CALCULATION_PRECISION = 1e12
@@ -112,7 +118,7 @@ const ATTACK_ROLL_MODES: readonly AttackRollMode[] = [
   'advantage',
   'disadvantage',
 ]
-const CONDITIONS: readonly Condition[] = ['vex', 'sap']
+const CONDITION_TYPES: readonly ConditionType[] = ['vex', 'sap']
 const DAMAGE_CONSEQUENCES: readonly DamageConsequence[] = [
   'none',
   'half',
@@ -134,23 +140,37 @@ function assertInteger(value: number, name: string, minimum?: number) {
   }
 }
 
-function validateConditions(conditions: readonly Condition[]) {
+function validateConditions(conditions: readonly ConditionConfig[]) {
   for (const condition of conditions) {
-    if (!CONDITIONS.includes(condition)) {
+    if (!CONDITION_TYPES.includes(condition.type)) {
       throw new RangeError('Condition must be vex or sap')
     }
   }
 }
 
 function validateDamageRoll(config: DamageRollConfig) {
-  assertInteger(config.damageDiceCount, 'Damage dice count', 1)
-  assertInteger(config.damageDieSides, 'Damage die sides', 2)
+  if (config.damagePools.length === 0) {
+    throw new RangeError('Damage must include at least one dice pool')
+  }
+  for (const pool of config.damagePools) {
+    assertInteger(pool.diceCount, 'Damage dice count', 1)
+    assertInteger(pool.dieSides, 'Damage die sides', 2)
+  }
   assertInteger(config.damageModifier, 'Damage modifier')
 }
 
 function damageDistribution(config: DamageRollConfig) {
   validateDamageRoll(config)
-  return sumDice(config.damageDiceCount, config.damageDieSides).map(
+  const diceTotal = config.damagePools.reduce(
+    (total, pool) =>
+      total.combine(
+        sumDice(pool.diceCount, pool.dieSides),
+        (left, right) => left + right,
+        (damage) => damage,
+      ),
+    Distribution.constant(0, (damage) => damage),
+  )
+  return diceTotal.map(
     (damage) => Math.max(0, damage + config.damageModifier),
     (damage) => damage,
   )
@@ -207,7 +227,7 @@ function effectiveRollMode(
 function applyConditions(
   state: SequenceState,
   target: 'player' | 'enemy',
-  conditions: readonly Condition[],
+  conditions: readonly ConditionType[],
 ): SequenceState {
   if (conditions.length === 0) return state
   const uniqueConditions = [...new Set(conditions)]
@@ -267,7 +287,9 @@ function attackTransitions(
     const success =
       roll === 20 ||
       (roll !== 1 && roll + config.attackModifier >= config.armorClass)
-    const appliedConditions = success ? [...new Set(config.hitConditions)] : []
+    const appliedConditions = success
+      ? [...new Set(config.hitConditions.map((condition) => condition.type))]
+      : []
     return {
       state: success
         ? applyConditions(consumedState, target, appliedConditions)
@@ -300,7 +322,11 @@ function savingThrowTransitions(
     const success = roll + config.saveModifier >= config.saveDc
     const consequence = success ? config.successDamage : config.failureDamage
     const appliedConditions = [
-      ...new Set(success ? config.successConditions : config.failureConditions),
+      ...new Set(
+        (success ? config.successConditions : config.failureConditions).map(
+          (condition) => condition.type,
+        ),
+      ),
     ]
     return {
       state: applyConditions(state, target, appliedConditions),
@@ -326,8 +352,10 @@ function configuredConditions(config: EventConfig) {
   return [
     ...new Set(
       config.type === 'player-attack' || config.type === 'enemy-attack'
-        ? config.hitConditions
-        : [...config.failureConditions, ...config.successConditions],
+        ? config.hitConditions.map((condition) => condition.type)
+        : [...config.failureConditions, ...config.successConditions].map(
+            (condition) => condition.type,
+          ),
     ),
   ]
 }
