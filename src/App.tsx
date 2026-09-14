@@ -1,6 +1,9 @@
 import { Calculator, Plus, Shield, Swords, Trash2, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import type {
+  AttackRollMode,
+  Condition,
+  ConditionTarget,
   DamageConsequence,
   EventConfig,
   EventResult,
@@ -18,6 +21,19 @@ const DAMAGE_CONSEQUENCES: readonly {
   { value: 'half', label: 'Half damage' },
   { value: 'full', label: 'Full damage' },
 ]
+const ATTACK_ROLL_MODES: readonly {
+  value: AttackRollMode
+  label: string
+}[] = [
+  { value: 'normal', label: 'Normal' },
+  { value: 'advantage', label: 'Advantage' },
+  { value: 'disadvantage', label: 'Disadvantage' },
+]
+const CONDITIONS: readonly Condition[] = ['vex', 'sap']
+const CONDITION_LABELS: Record<Condition, string> = {
+  vex: 'Vex',
+  sap: 'Sap',
+}
 
 type EventType = EventConfig['type']
 type OutcomeType = Outcome['type']
@@ -33,6 +49,8 @@ interface AttackDraft extends DamageDraft {
   readonly type: 'player-attack' | 'enemy-attack'
   readonly armorClass: string
   readonly attackModifier: string
+  readonly rollMode: AttackRollMode
+  readonly hitConditions: readonly Condition[]
 }
 
 interface SavingThrowDraft extends DamageDraft {
@@ -42,6 +60,8 @@ interface SavingThrowDraft extends DamageDraft {
   readonly saveModifier: string
   readonly failureDamage: DamageConsequence
   readonly successDamage: DamageConsequence
+  readonly failureConditions: readonly Condition[]
+  readonly successConditions: readonly Condition[]
 }
 
 type EventDraft = AttackDraft | SavingThrowDraft
@@ -53,6 +73,11 @@ type EventField =
   | 'saveModifier'
   | 'failureDamage'
   | 'successDamage'
+  | 'rollMode'
+  | 'hitConditions'
+  | 'failureConditions'
+  | 'successConditions'
+type EventFieldValue = string | readonly Condition[]
 type EventErrors = Partial<Record<EventField, string>>
 
 interface EventEvaluation {
@@ -89,6 +114,8 @@ function createEvent(type: EventType, id: string): EventDraft {
       type,
       armorClass: '12',
       attackModifier: '0',
+      rollMode: 'normal',
+      hitConditions: [],
       ...DEFAULT_DAMAGE,
     }
   }
@@ -99,6 +126,8 @@ function createEvent(type: EventType, id: string): EventDraft {
     saveModifier: '0',
     failureDamage: 'full',
     successDamage: 'half',
+    failureConditions: [],
+    successConditions: [],
     ...DEFAULT_DAMAGE,
   }
 }
@@ -150,6 +179,8 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       type: draft.type,
       armorClass: armorClass!,
       attackModifier: attackModifier!,
+      rollMode: draft.rollMode,
+      hitConditions: draft.hitConditions,
       damageDiceCount: damageDiceCount!,
       damageDieSides: damageDieSides!,
       damageModifier: damageModifier!,
@@ -177,6 +208,8 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
     damageModifier: damageModifier!,
     failureDamage: draft.failureDamage,
     successDamage: draft.successDamage,
+    failureConditions: draft.failureConditions,
+    successConditions: draft.successConditions,
   }
   return { errors, config, result: calculateEvent(config) }
 }
@@ -190,7 +223,7 @@ function outcomeTypeFor(event: EventDraft): OutcomeType {
 interface FieldProps {
   event: EventDraft
   errors: EventErrors
-  update: (field: EventField, value: string) => void
+  update: (field: EventField, value: EventFieldValue) => void
 }
 
 function DamageFields({ event, errors, update }: FieldProps) {
@@ -331,6 +364,20 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
             </span>
           )}
         </div>
+        <div className="field">
+          <label htmlFor={`${event.id}-roll-mode`}>Roll mode</label>
+          <select
+            id={`${event.id}-roll-mode`}
+            value={event.rollMode}
+            onChange={(change) => update('rollMode', change.target.value)}
+          >
+            {ATTACK_ROLL_MODES.map((mode) => (
+              <option key={mode.value} value={mode.value}>
+                {mode.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
     </fieldset>
   )
@@ -438,6 +485,111 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
   )
 }
 
+type ConditionField =
+  'hitConditions' | 'failureConditions' | 'successConditions'
+
+function toggledConditions(
+  selected: readonly Condition[],
+  condition: Condition,
+) {
+  return selected.includes(condition)
+    ? selected.filter((item) => item !== condition)
+    : [...selected, condition]
+}
+
+function ConditionChoices({
+  field,
+  label,
+  selected,
+  update,
+}: {
+  field: ConditionField
+  label: string
+  selected: readonly Condition[]
+  update: (field: EventField, value: EventFieldValue) => void
+}) {
+  return (
+    <div className="condition-group">
+      <span>{label}</span>
+      <div className="condition-options">
+        {CONDITIONS.map((condition) => (
+          <label className="condition-option" key={condition}>
+            <input
+              type="checkbox"
+              aria-label={`${CONDITION_LABELS[condition]} ${label}`}
+              checked={selected.includes(condition)}
+              onChange={() =>
+                update(field, toggledConditions(selected, condition))
+              }
+            />
+            {CONDITION_LABELS[condition]}
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
+  if (isAttackDraft(event)) {
+    return (
+      <fieldset className="condition-section">
+        <legend>Conditions on hit</legend>
+        <ConditionChoices
+          field="hitConditions"
+          label="Apply to target"
+          selected={event.hitConditions}
+          update={update}
+        />
+      </fieldset>
+    )
+  }
+  return (
+    <fieldset className="condition-section">
+      <legend>Conditions on target</legend>
+      <div className="condition-groups">
+        <ConditionChoices
+          field="failureConditions"
+          label="On failure"
+          selected={event.failureConditions}
+          update={update}
+        />
+        <ConditionChoices
+          field="successConditions"
+          label="On success"
+          selected={event.successConditions}
+          update={update}
+        />
+      </div>
+    </fieldset>
+  )
+}
+
+interface ShownConditionTotal {
+  readonly condition: Condition
+  readonly target: ConditionTarget
+}
+
+function conditionTargetFor(event: EventDraft): ConditionTarget {
+  return outcomeTypeFor(event) === 'expected-damage-against-enemies'
+    ? 'enemies'
+    : 'players'
+}
+
+function configuredConditionTotals(
+  event: EventDraft,
+): readonly ShownConditionTotal[] {
+  const conditions = [
+    ...new Set(
+      isAttackDraft(event)
+        ? event.hitConditions
+        : [...event.failureConditions, ...event.successConditions],
+    ),
+  ]
+  const target = conditionTargetFor(event)
+  return conditions.map((condition) => ({ condition, target }))
+}
+
 function App() {
   const [events, setEvents] = useState<EventDraft[]>([
     createEvent('player-attack', 'event-1'),
@@ -450,8 +602,15 @@ function App() {
     ? calculateSequence(evaluations.map((evaluation) => evaluation.config!))
     : undefined
   const shownOutcomeTypes = [...new Set(events.map(outcomeTypeFor))]
+  const shownConditionTotals = [
+    ...new Map(
+      events
+        .flatMap(configuredConditionTotals)
+        .map((total) => [`${total.condition}:${total.target}`, total] as const),
+    ).values(),
+  ]
 
-  function updateEvent(id: string, field: EventField, value: string) {
+  function updateEvent(id: string, field: EventField, value: EventFieldValue) {
     setEvents((current) =>
       current.map((event) =>
         event.id === id ? ({ ...event, [field]: value } as EventDraft) : event,
@@ -513,6 +672,28 @@ function App() {
               </aside>
             )
           })}
+          {shownConditionTotals.map(({ condition, target }) => {
+            const total = sequence?.expectedConditionApplications.find(
+              (item) => item.condition === condition && item.target === target,
+            )
+            return (
+              <aside
+                className="total-card condition-total"
+                key={`${condition}:${target}`}
+              >
+                <span>
+                  Expected {CONDITION_LABELS[condition]} applications to{' '}
+                  {target}
+                </span>
+                <strong>
+                  {total === undefined
+                    ? '—'
+                    : numberFormatter.format(total.expectedApplications)}
+                </strong>
+                <small>Across the sequence</small>
+              </aside>
+            )
+          })}
         </div>
       </section>
 
@@ -522,12 +703,13 @@ function App() {
             <p className="eyebrow">Sequence</p>
             <h2 id="sequence-title">Events</h2>
           </div>
-          <span className="workspace-note">Each event rolls independently</span>
+          <span className="workspace-note">Events resolve in sequence</span>
         </div>
 
         <ol className="attack-list">
           {events.map((event, index) => {
             const evaluation = evaluations[index]
+            const result = sequence?.eventResults[index] ?? evaluation.result
             const isAttack =
               event.type === 'player-attack' || event.type === 'enemy-attack'
             const target =
@@ -586,29 +768,41 @@ function App() {
                         updateEvent(event.id, field, value)
                       }
                     />
+                    <ConditionFields
+                      event={event}
+                      update={(field, value) =>
+                        updateEvent(event.id, field, value)
+                      }
+                    />
                   </div>
 
                   <div className="attack-results" aria-live="polite">
                     <span>
                       {isAttack ? 'Hit chance' : 'Save chance'}
                       <strong>
-                        {evaluation.result
-                          ? percentFormatter.format(
-                              evaluation.result.successProbability,
-                            )
+                        {result
+                          ? percentFormatter.format(result.successProbability)
                           : '—'}
                       </strong>
                     </span>
                     <span>
                       Expected damage against {target}
                       <strong>
-                        {evaluation.result
+                        {result
                           ? numberFormatter.format(
-                              evaluation.result.outcome.expectedDamage,
+                              result.outcome.expectedDamage,
                             )
                           : '—'}
                       </strong>
                     </span>
+                    {result?.conditionApplications.map((application) => (
+                      <span key={application.condition}>
+                        {CONDITION_LABELS[application.condition]} applied
+                        <strong>
+                          {percentFormatter.format(application.probability)}
+                        </strong>
+                      </span>
+                    ))}
                   </div>
                 </article>
               </li>

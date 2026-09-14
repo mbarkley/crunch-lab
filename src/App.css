@@ -626,3 +626,108 @@ input[aria-invalid='true'] {
     border-left: 0;
   }
 }
+
+/* Stateful roll and condition controls */
+.totals {
+  flex-wrap: wrap;
+}
+
+.totals .total-card {
+  flex-basis: 210px;
+}
+
+.attack-body .roll-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.condition-section {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 18px 20px 20px;
+  border: 0;
+  border-top: 1px solid #e2e6ea;
+  background: #fffdf8;
+}
+
+.condition-section legend {
+  padding: 0;
+  color: #37424e;
+  font-size: 0.8rem;
+  font-weight: 740;
+}
+
+.condition-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.condition-group > span {
+  display: block;
+  margin: 8px 0 6px;
+  color: #77828d;
+  font-size: 0.68rem;
+  font-weight: 720;
+}
+
+.condition-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.condition-option {
+  min-width: 84px;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  border: 1px solid #ded5bd;
+  border-radius: 8px;
+  background: #fff;
+  color: #625637;
+  font-size: 0.78rem;
+  font-weight: 720;
+  cursor: pointer;
+}
+
+.condition-option:has(input:checked) {
+  border-color: #b8791c;
+  background: #fff7e7;
+}
+
+.condition-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #7156cc;
+}
+
+.condition-total {
+  border-color: #e5d6ad;
+  background: linear-gradient(145deg, #fff 0%, #fff8e9 100%);
+}
+
+.condition-total span,
+.condition-total strong {
+  color: #74531e;
+}
+
+@media (max-width: 760px) {
+  .attack-body .roll-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .condition-section {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+}
+
+@media (max-width: 520px) {
+  .condition-groups {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}

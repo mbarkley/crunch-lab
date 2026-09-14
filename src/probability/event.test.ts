@@ -7,15 +7,20 @@ import {
 } from './event'
 import type {
   AttackConfig,
+  PlayerAttackConfig,
   PlayerSavingThrowConfig,
   SavingThrowConfig,
 } from './event'
 
-const playerAttack = (overrides: Partial<AttackConfig> = {}): AttackConfig => ({
+const playerAttack = (
+  overrides: Partial<PlayerAttackConfig> = {},
+): PlayerAttackConfig => ({
   id: 'attack-1',
   type: 'player-attack',
   armorClass: 12,
   attackModifier: 0,
+  rollMode: 'normal',
+  hitConditions: [],
   damageDiceCount: 1,
   damageDieSides: 8,
   damageModifier: 0,
@@ -34,6 +39,8 @@ const playerSave = (
   damageModifier: 0,
   failureDamage: 'full',
   successDamage: 'half',
+  failureConditions: [],
+  successConditions: [],
   ...overrides,
 })
 
@@ -46,18 +53,33 @@ describe('event calculations', () => {
       type: 'expected-damage-against-enemies',
       expectedDamage: 2.025,
     })
+    expect(result.conditionApplications).toEqual([])
   })
 
-  it('applies natural 1 and natural 20 attack rules without critical damage', () => {
+  it('supports normal, advantage, and disadvantage attack rolls', () => {
     expect(
-      calculateAttack(playerAttack({ armorClass: 1 })).successProbability,
-    ).toBeCloseTo(0.95)
+      calculateAttack(playerAttack({ rollMode: 'normal' })).successProbability,
+    ).toBeCloseTo(0.45)
     expect(
-      calculateAttack(playerAttack({ armorClass: 100 })).successProbability,
-    ).toBeCloseTo(0.05)
+      calculateAttack(playerAttack({ rollMode: 'advantage' }))
+        .successProbability,
+    ).toBeCloseTo(0.6975)
     expect(
-      calculateAttack(playerAttack({ armorClass: 100 })).outcome.expectedDamage,
-    ).toBeCloseTo(0.05 * 4.5)
+      calculateAttack(playerAttack({ rollMode: 'disadvantage' }))
+        .successProbability,
+    ).toBeCloseTo(0.2025)
+  })
+
+  it('applies natural 1 and natural 20 rules to the selected attack die', () => {
+    expect(
+      calculateAttack(playerAttack({ armorClass: 1, rollMode: 'advantage' }))
+        .successProbability,
+    ).toBeCloseTo(0.9975)
+    expect(
+      calculateAttack(
+        playerAttack({ armorClass: 100, rollMode: 'disadvantage' }),
+      ).successProbability,
+    ).toBeCloseTo(0.0025)
   })
 
   it('uses the attack modifier and targets players for enemy attacks', () => {
@@ -78,6 +100,7 @@ describe('event calculations', () => {
       type: 'expected-damage-against-players',
       expectedDamage: 3.375,
     })
+    expect(result.conditionApplications).toEqual([])
   })
 
   it('supports each damage consequence on either save branch', () => {
@@ -109,36 +132,163 @@ describe('event calculations', () => {
     ).toBeCloseTo(0.25)
   })
 
-  it('aggregates the requested mixed sequence by outcome type', () => {
+  it('applies Vex on hit and uses it for the next attack against that target', () => {
+    const sequence = calculateSequence([
+      playerAttack({ hitConditions: ['vex'] }),
+      playerAttack({ id: 'attack-2', hitConditions: ['vex'] }),
+      playerAttack({ id: 'attack-3' }),
+    ])
+
+    expect(sequence.eventResults[0].successProbability).toBeCloseTo(0.45)
+    expect(sequence.eventResults[1].successProbability).toBeCloseTo(0.561375)
+    expect(sequence.eventResults[2].successProbability).toBeCloseTo(
+      0.5889403125,
+    )
+    expect(sequence.eventResults[1].conditionApplications).toEqual([
+      { condition: 'vex', probability: 0.561375 },
+    ])
+    expect(sequence.expectedConditionApplications).toEqual([
+      {
+        condition: 'vex',
+        target: 'enemies',
+        expectedApplications: 1.011375,
+      },
+    ])
+  })
+
+  it('consumes Vex on the next applicable attack even when it misses', () => {
+    const sequence = calculateSequence([
+      playerAttack({ hitConditions: ['vex'] }),
+      playerAttack({ id: 'attack-2' }),
+      playerAttack({ id: 'attack-3' }),
+    ])
+
+    expect(sequence.eventResults[1].successProbability).toBeCloseTo(0.561375)
+    expect(sequence.eventResults[2].successProbability).toBeCloseTo(0.45)
+  })
+
+  it('applies Sap to the target and consumes it on that target’s next attack', () => {
+    const sequence = calculateSequence([
+      playerAttack({ hitConditions: ['sap'] }),
+      { ...playerAttack({ id: 'attack-2' }), type: 'enemy-attack' },
+      { ...playerAttack({ id: 'attack-3' }), type: 'enemy-attack' },
+    ])
+
+    expect(sequence.eventResults[1].successProbability).toBeCloseTo(0.338625)
+    expect(sequence.eventResults[2].successProbability).toBeCloseTo(0.45)
+  })
+
+  it('cancels advantage and disadvantage from manual and condition sources', () => {
+    const sequence = calculateSequence([
+      {
+        ...playerSave({
+          failureConditions: ['vex'],
+          successConditions: ['vex'],
+        }),
+        type: 'enemy-saving-throw',
+      },
+      playerAttack({ id: 'attack-2', rollMode: 'disadvantage' }),
+    ])
+
+    expect(sequence.eventResults[1].successProbability).toBeCloseTo(0.45)
+  })
+
+  it('applies save conditions on their separate branches and unions both branches', () => {
+    const branched = calculateSavingThrow(
+      playerSave({
+        failureConditions: ['vex'],
+        successConditions: ['sap'],
+      }),
+    )
+    expect(branched.conditionApplications).toEqual([
+      { condition: 'vex', probability: 0.55 },
+      { condition: 'sap', probability: 0.45 },
+    ])
+
+    const guaranteed = calculateSavingThrow(
+      playerSave({
+        failureConditions: ['vex'],
+        successConditions: ['vex'],
+      }),
+    )
+    expect(guaranteed.conditionApplications).toEqual([
+      { condition: 'vex', probability: 1 },
+    ])
+  })
+
+  it('aggregates expected applications separately for each target', () => {
+    const result = calculateSequence([
+      playerSave({
+        failureConditions: ['vex'],
+        successConditions: ['vex'],
+      }),
+      playerSave({
+        id: 'save-2',
+        failureConditions: ['vex'],
+        successConditions: ['vex'],
+      }),
+      {
+        ...playerSave({
+          id: 'save-3',
+          failureConditions: ['vex'],
+          successConditions: ['vex'],
+        }),
+        type: 'enemy-saving-throw',
+      },
+    ])
+
+    expect(result.expectedConditionApplications).toEqual([
+      { condition: 'vex', target: 'players', expectedApplications: 2 },
+      { condition: 'vex', target: 'enemies', expectedApplications: 1 },
+    ])
+  })
+
+  it('tracks Vex and Sap independently when both are applied', () => {
+    const result = calculateAttack(
+      playerAttack({ hitConditions: ['vex', 'sap'] }),
+    )
+
+    expect(result.conditionApplications).toEqual([
+      { condition: 'vex', probability: 0.45 },
+      { condition: 'sap', probability: 0.45 },
+    ])
+  })
+
+  it('aggregates a stateful mixed sequence by outcome type', () => {
     const events: readonly (AttackConfig | SavingThrowConfig)[] = [
-      playerAttack(),
+      playerAttack({ hitConditions: ['vex'] }),
       playerAttack({ id: 'attack-2' }),
       { ...playerAttack({ id: 'attack-3' }), type: 'enemy-attack' },
       playerSave(),
     ]
+    const result = calculateSequence(events)
 
-    expect(calculateSequence(events)).toEqual({
-      eventResults: events.map(calculateEvent),
+    expect(result.eventResults[1].outcome.expectedDamage).toBeCloseTo(
+      0.561375 * 4.5,
+    )
+    expect(result.outcomes).toEqual([
+      {
+        type: 'expected-damage-against-enemies',
+        expectedDamage: 4.5511875,
+      },
+      {
+        type: 'expected-damage-against-players',
+        expectedDamage: 5.4,
+      },
+    ])
+  })
+
+  it('omits outcome and condition types that do not occur', () => {
+    expect(calculateSequence([playerAttack()])).toEqual({
+      eventResults: [calculateEvent(playerAttack())],
       outcomes: [
         {
           type: 'expected-damage-against-enemies',
-          expectedDamage: 4.05,
-        },
-        {
-          type: 'expected-damage-against-players',
-          expectedDamage: 5.4,
+          expectedDamage: 2.025,
         },
       ],
+      expectedConditionApplications: [],
     })
-  })
-
-  it('omits outcome types that do not occur', () => {
-    expect(calculateSequence([playerAttack()]).outcomes).toEqual([
-      {
-        type: 'expected-damage-against-enemies',
-        expectedDamage: 2.025,
-      },
-    ])
   })
 
   it('rejects invalid event configurations', () => {
@@ -154,5 +304,10 @@ describe('event calculations', () => {
     expect(() =>
       calculateSavingThrow(playerSave({ saveModifier: 1.5 })),
     ).toThrow(/Save modifier/)
+    expect(() =>
+      calculateAttack(
+        playerAttack({ rollMode: 'invalid' as PlayerAttackConfig['rollMode'] }),
+      ),
+    ).toThrow(/roll mode/)
   })
 })
