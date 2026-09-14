@@ -10,9 +10,11 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { type DragEvent, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import type {
+  ActivityType,
   AttackRollMode,
+  Combatant,
   ConditionConfig,
   ConditionTarget,
   ConditionType,
@@ -86,6 +88,30 @@ interface SavingThrowDraft extends DamageDraft {
 }
 
 type EventDraft = AttackDraft | SavingThrowDraft
+
+interface ActivityDraft {
+  readonly id: string
+  readonly type: ActivityType
+  readonly owner: Combatant
+  readonly events: readonly EventDraft[]
+}
+
+interface TurnDraft {
+  readonly id: string
+  readonly owner: Combatant
+  readonly activities: readonly ActivityDraft[]
+}
+
+interface RoundDraft {
+  readonly id: string
+  readonly turns: readonly TurnDraft[]
+}
+
+interface ActivityPath {
+  readonly roundId: string
+  readonly turnId: string
+  readonly activityId: string
+}
 type EventField =
   | 'damageModifier'
   | 'armorClass'
@@ -791,39 +817,66 @@ function EventTypeButtons({
 }
 
 function App() {
-  const [events, setEvents] = useState<EventDraft[]>([
-    createEvent('player-attack', 'event-1'),
+  const [rounds, setRounds] = useState<RoundDraft[]>([
+    {
+      id: 'round-1',
+      turns: [
+        {
+          id: 'turn-1',
+          owner: 'player',
+          activities: [
+            {
+              id: 'activity-1',
+              type: 'action',
+              owner: 'player',
+              events: [createEvent('player-attack', 'event-1')],
+            },
+          ],
+        },
+      ],
+    },
   ])
-  const [isChooserOpen, setChooserOpen] = useState(false)
-  const [draggedEventId, setDraggedEventId] = useState<string>()
+  const [chooserActivityId, setChooserActivityId] = useState<string>()
+  const [draggedEvent, setDraggedEvent] = useState<
+    { readonly activityId: string; readonly eventId: string } | undefined
+  >()
   const [dragOverEventId, setDragOverEventId] = useState<string>()
   const [reorderAnnouncement, setReorderAnnouncement] = useState('')
+  const nextRoundId = useRef(2)
+  const nextTurnId = useRef(2)
+  const nextActivityId = useRef(2)
   const nextEventId = useRef(2)
   const nextDamagePoolId = useRef(1)
-  const evaluations = events.map(evaluateEvent)
-  const isSequenceValid = evaluations.every((evaluation) => evaluation.config)
+
+  const events = rounds.flatMap((round) =>
+    round.turns.flatMap((turn) =>
+      turn.activities.flatMap((activity) => activity.events),
+    ),
+  )
+  const evaluations = new Map(
+    events.map((event) => [event.id, evaluateEvent(event)] as const),
+  )
+  const isSequenceValid = [...evaluations.values()].every(
+    (evaluation) => evaluation.config,
+  )
   const sequence = isSequenceValid
     ? calculateSequence({
         initialState: INITIAL_SEQUENCE_STATE,
-        rounds: [
-          {
-            id: 'round-1',
-            turns: [
-              {
-                id: 'turn-1',
-                owner: 'player',
-                activities: [
-                  {
-                    id: 'activity-1',
-                    type: 'action',
-                    owner: 'player',
-                    events: evaluations.map((evaluation) => evaluation.config!),
-                  },
-                ],
-              },
-            ],
-          },
-        ],
+        rounds: rounds.map((round) => ({
+          id: round.id,
+          turns: round.turns.map((turn) => ({
+            id: turn.id,
+            owner: turn.owner,
+            activities: turn.activities.map((activity) => ({
+              id: activity.id,
+              type: activity.type,
+              owner: activity.owner,
+              events: activity.events.map(
+                (event) => evaluations.get(event.id)!.config!,
+              ),
+            })),
+          })),
+        })),
       })
     : undefined
   const shownOutcomeTypes = [...new Set(events.map(outcomeTypeFor))]
@@ -834,23 +887,107 @@ function App() {
         .map((total) => [`${total.condition}:${total.target}`, total] as const),
     ).values(),
   ]
+  const eventPositions = new Map(
+    events.map((event, index) => [event.id, index + 1] as const),
+  )
 
-  function updateEvent(id: string, field: EventField, value: EventFieldValue) {
-    setEvents((current) =>
-      current.map((event) =>
-        event.id === id ? ({ ...event, [field]: value } as EventDraft) : event,
+  function createEventId() {
+    const id = `event-${nextEventId.current}`
+    nextEventId.current += 1
+    return id
+  }
+
+  function createPoolId() {
+    const id = `damage-${nextDamagePoolId.current}`
+    nextDamagePoolId.current += 1
+    return id
+  }
+
+  function createActivity(owner: Combatant, type: ActivityType): ActivityDraft {
+    const id = `activity-${nextActivityId.current}`
+    nextActivityId.current += 1
+    return { id, type, owner, events: [] }
+  }
+
+  function createTurn(owner: Combatant): TurnDraft {
+    const id = `turn-${nextTurnId.current}`
+    nextTurnId.current += 1
+    return { id, owner, activities: [] }
+  }
+
+  function cloneActivity(activity: ActivityDraft): ActivityDraft {
+    const id = `activity-${nextActivityId.current}`
+    nextActivityId.current += 1
+    return {
+      ...activity,
+      id,
+      events: activity.events.map((event) =>
+        duplicateEvent(event, createEventId(), createPoolId),
+      ),
+    }
+  }
+
+  function cloneTurn(turn: TurnDraft): TurnDraft {
+    const id = `turn-${nextTurnId.current}`
+    nextTurnId.current += 1
+    return {
+      ...turn,
+      id,
+      activities: turn.activities.map(cloneActivity),
+    }
+  }
+
+  function updateActivity(
+    path: ActivityPath,
+    update: (activity: ActivityDraft) => ActivityDraft,
+  ) {
+    setRounds((current) =>
+      current.map((round) =>
+        round.id !== path.roundId
+          ? round
+          : {
+              ...round,
+              turns: round.turns.map((turn) =>
+                turn.id !== path.turnId
+                  ? turn
+                  : {
+                      ...turn,
+                      activities: turn.activities.map((activity) =>
+                        activity.id === path.activityId
+                          ? update(activity)
+                          : activity,
+                      ),
+                    },
+              ),
+            },
       ),
     )
   }
 
+  function updateEvent(
+    path: ActivityPath,
+    id: string,
+    field: EventField,
+    value: EventFieldValue,
+  ) {
+    updateActivity(path, (activity) => ({
+      ...activity,
+      events: activity.events.map((event) =>
+        event.id === id ? ({ ...event, [field]: value } as EventDraft) : event,
+      ),
+    }))
+  }
+
   function updateDamagePool(
+    path: ActivityPath,
     eventId: string,
     poolId: string,
     field: DamagePoolField,
     value: string,
   ) {
-    setEvents((current) =>
-      current.map((event) =>
+    updateActivity(path, (activity) => ({
+      ...activity,
+      events: activity.events.map((event) =>
         event.id === eventId
           ? {
               ...event,
@@ -860,30 +997,34 @@ function App() {
             }
           : event,
       ),
-    )
+    }))
   }
 
-  function addDamagePool(eventId: string) {
-    const id = 'damage-' + nextDamagePoolId.current
-    nextDamagePoolId.current += 1
-    setEvents((current) =>
-      current.map((event) =>
+  function addDamagePool(path: ActivityPath, eventId: string) {
+    updateActivity(path, (activity) => ({
+      ...activity,
+      events: activity.events.map((event) =>
         event.id === eventId
           ? {
               ...event,
               damagePools: [
                 ...event.damagePools,
-                { id, diceCount: '1', dieSides: '8' },
+                { id: createPoolId(), diceCount: '1', dieSides: '8' },
               ],
             }
           : event,
       ),
-    )
+    }))
   }
 
-  function removeDamagePool(eventId: string, poolId: string) {
-    setEvents((current) =>
-      current.map((event) =>
+  function removeDamagePool(
+    path: ActivityPath,
+    eventId: string,
+    poolId: string,
+  ) {
+    updateActivity(path, (activity) => ({
+      ...activity,
+      events: activity.events.map((event) =>
         event.id === eventId && event.damagePools.length > 1
           ? {
               ...event,
@@ -893,70 +1034,224 @@ function App() {
             }
           : event,
       ),
+    }))
+  }
+
+  function addEvent(path: ActivityPath, type: EventType) {
+    updateActivity(path, (activity) => ({
+      ...activity,
+      events: [...activity.events, createEvent(type, createEventId())],
+    }))
+    setChooserActivityId(undefined)
+  }
+
+  function removeEvent(path: ActivityPath, id: string) {
+    updateActivity(path, (activity) => ({
+      ...activity,
+      events: activity.events.filter((event) => event.id !== id),
+    }))
+  }
+
+  function copyEvent(path: ActivityPath, id: string) {
+    updateActivity(path, (activity) => {
+      const index = activity.events.findIndex((event) => event.id === id)
+      if (index === -1) return activity
+      const updated = [...activity.events]
+      updated.splice(
+        index + 1,
+        0,
+        duplicateEvent(updated[index], createEventId(), createPoolId),
+      )
+      return { ...activity, events: updated }
+    })
+  }
+
+  function moveEvent(path: ActivityPath, fromIndex: number, toIndex: number) {
+    updateActivity(path, (activity) => {
+      if (
+        fromIndex === toIndex ||
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= activity.events.length ||
+        toIndex >= activity.events.length
+      ) {
+        return activity
+      }
+      const updated = [...activity.events]
+      const [moved] = updated.splice(fromIndex, 1)
+      updated.splice(toIndex, 0, moved)
+      setReorderAnnouncement(
+        `${EVENT_LABELS[moved.type]} moved to position ${toIndex + 1} in its activity.`,
+      )
+      return { ...activity, events: updated }
+    })
+  }
+
+  function dropEvent(path: ActivityPath, targetId: string) {
+    if (!draggedEvent || draggedEvent.activityId !== path.activityId) return
+    const activity = rounds
+      .find((round) => round.id === path.roundId)
+      ?.turns.find((turn) => turn.id === path.turnId)
+      ?.activities.find((item) => item.id === path.activityId)
+    if (!activity) return
+    moveEvent(
+      path,
+      activity.events.findIndex((event) => event.id === draggedEvent.eventId),
+      activity.events.findIndex((event) => event.id === targetId),
     )
+    setDraggedEvent(undefined)
+    setDragOverEventId(undefined)
   }
 
-  function addEvent(type: EventType) {
-    const id = `event-${nextEventId.current}`
-    nextEventId.current += 1
-    setEvents((current) => [...current, createEvent(type, id)])
-    setChooserOpen(false)
+  function moveRound(index: number, direction: -1 | 1) {
+    setRounds((current) => {
+      const target = index + direction
+      if (target < 0 || target >= current.length) return current
+      const updated = [...current]
+      const [moved] = updated.splice(index, 1)
+      updated.splice(target, 0, moved)
+      setReorderAnnouncement(`Round moved to position ${target + 1}.`)
+      return updated
+    })
   }
 
-  function removeEvent(id: string) {
-    setEvents((current) => current.filter((event) => event.id !== id))
+  function addRound() {
+    const id = `round-${nextRoundId.current}`
+    nextRoundId.current += 1
+    setRounds((current) => [...current, { id, turns: [] }])
   }
 
-  function copyEvent(id: string) {
-    const newId = `event-${nextEventId.current}`
-    nextEventId.current += 1
-    setEvents((current) => {
-      const index = current.findIndex((event) => event.id === id)
-      if (index === -1) return current
-      const copy = duplicateEvent(current[index], newId, () => {
-        const poolId = `damage-${nextDamagePoolId.current}`
-        nextDamagePoolId.current += 1
-        return poolId
-      })
+  function duplicateRound(index: number) {
+    setRounds((current) => {
+      const source = current[index]
+      if (!source) return current
+      const id = `round-${nextRoundId.current}`
+      nextRoundId.current += 1
+      const copy: RoundDraft = {
+        id,
+        turns: source.turns.map(cloneTurn),
+      }
       const updated = [...current]
       updated.splice(index + 1, 0, copy)
       return updated
     })
   }
 
-  function moveEvent(fromIndex: number, toIndex: number) {
-    if (
-      fromIndex === toIndex ||
-      fromIndex < 0 ||
-      toIndex < 0 ||
-      fromIndex >= events.length ||
-      toIndex >= events.length
-    ) {
-      return
-    }
-    const movedLabel = EVENT_LABELS[events[fromIndex].type]
-    setEvents((current) => {
-      const updated = [...current]
-      const [moved] = updated.splice(fromIndex, 1)
-      updated.splice(toIndex, 0, moved)
-      return updated
-    })
-    setReorderAnnouncement(`${movedLabel} moved to position ${toIndex + 1}.`)
+  function moveTurn(roundId: string, index: number, direction: -1 | 1) {
+    setRounds((current) =>
+      current.map((round) => {
+        if (round.id !== roundId) return round
+        const target = index + direction
+        if (target < 0 || target >= round.turns.length) return round
+        const turns = [...round.turns]
+        const [moved] = turns.splice(index, 1)
+        turns.splice(target, 0, moved)
+        setReorderAnnouncement(
+          `${moved.owner === 'player' ? 'Player' : 'Enemy'} turn moved to position ${target + 1} in its round.`,
+        )
+        return { ...round, turns }
+      }),
+    )
   }
 
-  function dropEvent(targetId: string) {
-    if (!draggedEventId) return
-    const fromIndex = events.findIndex((event) => event.id === draggedEventId)
-    const toIndex = events.findIndex((event) => event.id === targetId)
-    moveEvent(fromIndex, toIndex)
-    setDraggedEventId(undefined)
-    setDragOverEventId(undefined)
+  function addTurn(roundId: string, owner: Combatant) {
+    setRounds((current) =>
+      current.map((round) =>
+        round.id === roundId
+          ? { ...round, turns: [...round.turns, createTurn(owner)] }
+          : round,
+      ),
+    )
   }
 
-  function startDragging(event: DragEvent, id: string) {
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', id)
-    setDraggedEventId(id)
+  function duplicateTurn(roundId: string, index: number) {
+    setRounds((current) =>
+      current.map((round) => {
+        if (round.id !== roundId || !round.turns[index]) return round
+        const turns = [...round.turns]
+        turns.splice(index + 1, 0, cloneTurn(round.turns[index]))
+        return { ...round, turns }
+      }),
+    )
+  }
+
+  function moveActivity(
+    roundId: string,
+    turnId: string,
+    index: number,
+    direction: -1 | 1,
+  ) {
+    setRounds((current) =>
+      current.map((round) =>
+        round.id !== roundId
+          ? round
+          : {
+              ...round,
+              turns: round.turns.map((turn) => {
+                if (turn.id !== turnId) return turn
+                const target = index + direction
+                if (target < 0 || target >= turn.activities.length) return turn
+                const activities = [...turn.activities]
+                const [moved] = activities.splice(index, 1)
+                activities.splice(target, 0, moved)
+                setReorderAnnouncement(
+                  `${moved.type === 'action' ? 'Action' : 'Bonus action'} moved to position ${target + 1} in its turn.`,
+                )
+                return { ...turn, activities }
+              }),
+            },
+      ),
+    )
+  }
+
+  function addActivity(
+    roundId: string,
+    turnId: string,
+    owner: Combatant,
+    type: ActivityType,
+  ) {
+    setRounds((current) =>
+      current.map((round) =>
+        round.id !== roundId
+          ? round
+          : {
+              ...round,
+              turns: round.turns.map((turn) =>
+                turn.id === turnId
+                  ? {
+                      ...turn,
+                      activities: [
+                        ...turn.activities,
+                        createActivity(owner, type),
+                      ],
+                    }
+                  : turn,
+              ),
+            },
+      ),
+    )
+  }
+
+  function duplicateActivity(roundId: string, turnId: string, index: number) {
+    setRounds((current) =>
+      current.map((round) =>
+        round.id !== roundId
+          ? round
+          : {
+              ...round,
+              turns: round.turns.map((turn) => {
+                if (turn.id !== turnId || !turn.activities[index]) return turn
+                const activities = [...turn.activities]
+                activities.splice(
+                  index + 1,
+                  0,
+                  cloneActivity(turn.activities[index]),
+                )
+                return { ...turn, activities }
+              }),
+            },
+      ),
+    )
   }
 
   return (
@@ -966,19 +1261,18 @@ function App() {
           <Calculator aria-hidden="true" size={24} />
           <span>Crunch Lab</span>
         </div>
-        <span className="status">Event sequence</span>
+        <span className="status">Turn sequence</span>
       </header>
 
       <section className="intro" aria-labelledby="page-title">
         <div>
           <p className="eyebrow">Dice probability workbench</p>
-          <h1 id="page-title">Build your event sequence.</h1>
+          <h1 id="page-title">Build your combat timeline.</h1>
           <p className="intro-copy">
-            Combine attacks and saving throws from either side. Outcomes update
-            as you work.
+            Arrange rounds, turns, actions, and events. Outcomes update as you
+            work.
           </p>
         </div>
-
         <div className="totals" aria-live="polite">
           {shownOutcomeTypes.map((type) => {
             const outcome = sequence?.outcomes.find(
@@ -1031,236 +1325,668 @@ function App() {
         <div className="workspace-heading">
           <div>
             <p className="eyebrow">Sequence</p>
-            <h2 id="sequence-title">Events</h2>
+            <h2 id="sequence-title">Combat timeline</h2>
           </div>
-          <span className="workspace-note">Events resolve in sequence</span>
+          <span className="workspace-note">
+            Rounds resolve from top to bottom
+          </span>
         </div>
-
         <p className="visually-hidden" aria-live="polite">
           {reorderAnnouncement}
         </p>
 
-        <ol className="attack-list">
-          {events.map((event, index) => {
-            const evaluation = evaluations[index]
-            const result = sequence?.eventResults[event.id] ?? evaluation.result
-            const isAttack =
-              event.type === 'player-attack' || event.type === 'enemy-attack'
-            const target =
-              outcomeTypeFor(event) === 'expected-damage-against-enemies'
-                ? 'enemies'
-                : 'players'
-            return (
-              <li
-                className={`attack-step${draggedEventId === event.id ? ' is-dragging' : ''}${dragOverEventId === event.id && draggedEventId !== event.id ? ' is-drag-over' : ''}`}
-                key={event.id}
-                onDragOver={(dragEvent) => {
-                  dragEvent.preventDefault()
-                  dragEvent.dataTransfer.dropEffect = 'move'
-                  setDragOverEventId(event.id)
-                }}
-                onDragLeave={() =>
-                  setDragOverEventId((current) =>
-                    current === event.id ? undefined : current,
-                  )
-                }
-                onDrop={(dragEvent) => {
-                  dragEvent.preventDefault()
-                  dropEvent(event.id)
-                }}
-              >
-                <div className="step-marker" aria-hidden="true">
-                  {index + 1}
+        <div className="round-list">
+          {rounds.map((round, roundIndex) => (
+            <section
+              className="round-card"
+              aria-labelledby={`${round.id}-title`}
+              key={round.id}
+            >
+              <header className="timeline-heading round-heading">
+                <div>
+                  <p className="timeline-kicker">Round {roundIndex + 1}</p>
+                  <h3 id={`${round.id}-title`}>Round {roundIndex + 1}</h3>
                 </div>
-                <article
-                  className="attack-card"
-                  aria-labelledby={`${event.id}-title`}
-                >
-                  <div className="attack-heading">
-                    <div>
-                      <p className="attack-kicker">Event {index + 1}</p>
-                      <h3 id={`${event.id}-title`}>
-                        {EVENT_LABELS[event.type]}
-                      </h3>
-                    </div>
-                    <div className="event-actions">
-                      <button
-                        className="drag-handle"
-                        type="button"
-                        draggable
-                        aria-label={`Drag to reorder event ${index + 1}`}
-                        title="Drag to reorder"
-                        onDragStart={(dragEvent) =>
-                          startDragging(dragEvent, event.id)
-                        }
-                        onDragEnd={() => {
-                          setDraggedEventId(undefined)
-                          setDragOverEventId(undefined)
-                        }}
-                      >
-                        <GripVertical aria-hidden="true" size={18} />
-                      </button>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        aria-label={`Move event ${index + 1} up`}
-                        title="Move up"
-                        disabled={index === 0}
-                        onClick={() => moveEvent(index, index - 1)}
-                      >
-                        <ChevronUp aria-hidden="true" size={18} />
-                      </button>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        aria-label={`Move event ${index + 1} down`}
-                        title="Move down"
-                        disabled={index === events.length - 1}
-                        onClick={() => moveEvent(index, index + 1)}
-                      >
-                        <ChevronDown aria-hidden="true" size={18} />
-                      </button>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        aria-label={`Duplicate event ${index + 1}`}
-                        title="Duplicate"
-                        onClick={() => copyEvent(event.id)}
-                      >
-                        <Copy aria-hidden="true" size={17} />
-                      </button>
-                      <button
-                        className="icon-button remove-event-button"
-                        type="button"
-                        aria-label={`Remove event ${index + 1}`}
-                        title="Delete"
-                        onClick={() => removeEvent(event.id)}
-                      >
-                        <Trash2 aria-hidden="true" size={18} />
-                      </button>
-                    </div>
-                  </div>
+                <div className="event-actions">
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label={`Move round ${roundIndex + 1} up`}
+                    disabled={roundIndex === 0}
+                    onClick={() => moveRound(roundIndex, -1)}
+                  >
+                    <ChevronUp aria-hidden="true" size={18} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label={`Move round ${roundIndex + 1} down`}
+                    disabled={roundIndex === rounds.length - 1}
+                    onClick={() => moveRound(roundIndex, 1)}
+                  >
+                    <ChevronDown aria-hidden="true" size={18} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    aria-label={`Duplicate round ${roundIndex + 1}`}
+                    onClick={() => duplicateRound(roundIndex)}
+                  >
+                    <Copy aria-hidden="true" size={17} />
+                  </button>
+                  <button
+                    className="icon-button remove-event-button"
+                    type="button"
+                    aria-label={`Remove round ${roundIndex + 1}`}
+                    onClick={() =>
+                      setRounds((current) =>
+                        current.filter((item) => item.id !== round.id),
+                      )
+                    }
+                  >
+                    <Trash2 aria-hidden="true" size={18} />
+                  </button>
+                </div>
+              </header>
 
-                  <div className={isAttack ? 'attack-body' : 'saving-body'}>
-                    {isAttack ? (
-                      <AttackRollFields
-                        event={event}
-                        errors={evaluation.errors}
-                        update={(field, value) =>
-                          updateEvent(event.id, field, value)
-                        }
-                      />
-                    ) : (
-                      <SavingThrowFields
-                        event={event}
-                        errors={evaluation.errors}
-                        update={(field, value) =>
-                          updateEvent(event.id, field, value)
-                        }
-                      />
-                    )}
-                    <DamageFields
-                      event={event}
-                      errors={evaluation.errors}
-                      update={(field, value) =>
-                        updateEvent(event.id, field, value)
-                      }
-                      updatePool={(poolId, field, value) =>
-                        updateDamagePool(event.id, poolId, field, value)
-                      }
-                      addPool={() => addDamagePool(event.id)}
-                      removePool={(poolId) =>
-                        removeDamagePool(event.id, poolId)
-                      }
-                    />
-                    <ConditionFields
-                      event={event}
-                      update={(field, value) =>
-                        updateEvent(event.id, field, value)
-                      }
-                    />
-                  </div>
-
-                  <div className="attack-results" aria-live="polite">
-                    <span>
-                      {isAttack ? 'Hit chance' : 'Save chance'}
-                      <strong>
-                        {result
-                          ? percentFormatter.format(result.successProbability)
-                          : '—'}
-                      </strong>
-                    </span>
-                    {isAttack ? (
-                      <span>
-                        Critical chance
-                        <strong>
-                          {result
-                            ? percentFormatter.format(
-                                result.criticalProbability ?? 0,
-                              )
-                            : '—'}
-                        </strong>
-                      </span>
-                    ) : null}
-                    <span>
-                      Expected damage against {target}
-                      <strong>
-                        {result
-                          ? numberFormatter.format(
-                              result.outcome.expectedDamage,
+              <div className="turn-list">
+                {round.turns.map((turn, turnIndex) => (
+                  <section
+                    className={`turn-card ${turn.owner}-turn`}
+                    aria-labelledby={`${turn.id}-title`}
+                    key={turn.id}
+                  >
+                    <header className="timeline-heading turn-heading">
+                      <div>
+                        <p className="timeline-kicker">Turn {turnIndex + 1}</p>
+                        <h4 id={`${turn.id}-title`}>
+                          {turn.owner === 'player'
+                            ? 'Player turn'
+                            : 'Enemy turn'}
+                        </h4>
+                      </div>
+                      <div className="event-actions">
+                        <button
+                          className="icon-button"
+                          type="button"
+                          aria-label={`Move ${turn.owner} turn ${turnIndex + 1} up`}
+                          disabled={turnIndex === 0}
+                          onClick={() => moveTurn(round.id, turnIndex, -1)}
+                        >
+                          <ChevronUp aria-hidden="true" size={17} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          aria-label={`Move ${turn.owner} turn ${turnIndex + 1} down`}
+                          disabled={turnIndex === round.turns.length - 1}
+                          onClick={() => moveTurn(round.id, turnIndex, 1)}
+                        >
+                          <ChevronDown aria-hidden="true" size={17} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          aria-label={`Duplicate ${turn.owner} turn ${turnIndex + 1}`}
+                          onClick={() => duplicateTurn(round.id, turnIndex)}
+                        >
+                          <Copy aria-hidden="true" size={16} />
+                        </button>
+                        <button
+                          className="icon-button remove-event-button"
+                          type="button"
+                          aria-label={`Remove ${turn.owner} turn ${turnIndex + 1}`}
+                          onClick={() =>
+                            setRounds((current) =>
+                              current.map((item) =>
+                                item.id === round.id
+                                  ? {
+                                      ...item,
+                                      turns: item.turns.filter(
+                                        (candidate) => candidate.id !== turn.id,
+                                      ),
+                                    }
+                                  : item,
+                              ),
                             )
-                          : '—'}
-                      </strong>
-                    </span>
-                    {result?.conditionApplications.map((application) => (
-                      <span key={application.condition}>
-                        {CONDITION_LABELS[application.condition]} applied
-                        <strong>
-                          {percentFormatter.format(application.probability)}
-                        </strong>
-                      </span>
-                    ))}
-                  </div>
-                </article>
-              </li>
-            )
-          })}
-        </ol>
+                          }
+                        >
+                          <Trash2 aria-hidden="true" size={17} />
+                        </button>
+                      </div>
+                    </header>
 
-        {events.length === 0 ? (
+                    <div className="activity-list">
+                      {turn.activities.map((activity, activityIndex) => {
+                        const path: ActivityPath = {
+                          roundId: round.id,
+                          turnId: turn.id,
+                          activityId: activity.id,
+                        }
+                        return (
+                          <section
+                            className="activity-card"
+                            aria-labelledby={`${activity.id}-title`}
+                            key={activity.id}
+                          >
+                            <header className="timeline-heading activity-heading">
+                              <div>
+                                <p className="timeline-kicker">
+                                  Activity {activityIndex + 1}
+                                </p>
+                                <h5 id={`${activity.id}-title`}>
+                                  {activity.type === 'action'
+                                    ? 'Action'
+                                    : 'Bonus action'}
+                                </h5>
+                              </div>
+                              <div className="event-actions">
+                                <button
+                                  className="icon-button"
+                                  type="button"
+                                  aria-label={`Move activity ${activityIndex + 1} up`}
+                                  disabled={activityIndex === 0}
+                                  onClick={() =>
+                                    moveActivity(
+                                      round.id,
+                                      turn.id,
+                                      activityIndex,
+                                      -1,
+                                    )
+                                  }
+                                >
+                                  <ChevronUp aria-hidden="true" size={16} />
+                                </button>
+                                <button
+                                  className="icon-button"
+                                  type="button"
+                                  aria-label={`Move activity ${activityIndex + 1} down`}
+                                  disabled={
+                                    activityIndex === turn.activities.length - 1
+                                  }
+                                  onClick={() =>
+                                    moveActivity(
+                                      round.id,
+                                      turn.id,
+                                      activityIndex,
+                                      1,
+                                    )
+                                  }
+                                >
+                                  <ChevronDown aria-hidden="true" size={16} />
+                                </button>
+                                <button
+                                  className="icon-button"
+                                  type="button"
+                                  aria-label={`Duplicate activity ${activityIndex + 1}`}
+                                  onClick={() =>
+                                    duplicateActivity(
+                                      round.id,
+                                      turn.id,
+                                      activityIndex,
+                                    )
+                                  }
+                                >
+                                  <Copy aria-hidden="true" size={15} />
+                                </button>
+                                <button
+                                  className="icon-button remove-event-button"
+                                  type="button"
+                                  aria-label={`Remove activity ${activityIndex + 1}`}
+                                  onClick={() =>
+                                    setRounds((current) =>
+                                      current.map((item) =>
+                                        item.id !== round.id
+                                          ? item
+                                          : {
+                                              ...item,
+                                              turns: item.turns.map(
+                                                (candidate) =>
+                                                  candidate.id !== turn.id
+                                                    ? candidate
+                                                    : {
+                                                        ...candidate,
+                                                        activities:
+                                                          candidate.activities.filter(
+                                                            (entry) =>
+                                                              entry.id !==
+                                                              activity.id,
+                                                          ),
+                                                      },
+                                              ),
+                                            },
+                                      ),
+                                    )
+                                  }
+                                >
+                                  <Trash2 aria-hidden="true" size={16} />
+                                </button>
+                              </div>
+                            </header>
+
+                            <ol className="attack-list">
+                              {activity.events.map((event, eventIndex) => {
+                                const evaluation = evaluations.get(event.id)!
+                                const result =
+                                  sequence?.eventResults[event.id] ??
+                                  evaluation.result
+                                const isAttack =
+                                  event.type === 'player-attack' ||
+                                  event.type === 'enemy-attack'
+                                const target =
+                                  outcomeTypeFor(event) ===
+                                  'expected-damage-against-enemies'
+                                    ? 'enemies'
+                                    : 'players'
+                                const position = eventPositions.get(event.id)!
+                                return (
+                                  <li
+                                    className={`attack-step${draggedEvent?.eventId === event.id ? ' is-dragging' : ''}${dragOverEventId === event.id && draggedEvent?.eventId !== event.id ? ' is-drag-over' : ''}`}
+                                    key={event.id}
+                                    onDragOver={(dragEvent) => {
+                                      if (
+                                        draggedEvent?.activityId !== activity.id
+                                      )
+                                        return
+                                      dragEvent.preventDefault()
+                                      dragEvent.dataTransfer.dropEffect = 'move'
+                                      setDragOverEventId(event.id)
+                                    }}
+                                    onDragLeave={() =>
+                                      setDragOverEventId((current) =>
+                                        current === event.id
+                                          ? undefined
+                                          : current,
+                                      )
+                                    }
+                                    onDrop={(dragEvent) => {
+                                      dragEvent.preventDefault()
+                                      dropEvent(path, event.id)
+                                    }}
+                                  >
+                                    <div
+                                      className="step-marker"
+                                      aria-hidden="true"
+                                    >
+                                      {eventIndex + 1}
+                                    </div>
+                                    <article
+                                      className="attack-card"
+                                      aria-labelledby={`${event.id}-title`}
+                                    >
+                                      <div className="attack-heading">
+                                        <div>
+                                          <p className="attack-kicker">
+                                            Event {eventIndex + 1}
+                                          </p>
+                                          <h6 id={`${event.id}-title`}>
+                                            {EVENT_LABELS[event.type]}
+                                          </h6>
+                                        </div>
+                                        <div className="event-actions">
+                                          <button
+                                            className="drag-handle"
+                                            type="button"
+                                            draggable
+                                            aria-label={`Drag to reorder event ${position}`}
+                                            title="Drag to reorder within this activity"
+                                            onDragStart={(dragEvent) => {
+                                              dragEvent.dataTransfer.effectAllowed =
+                                                'move'
+                                              dragEvent.dataTransfer.setData(
+                                                'text/plain',
+                                                event.id,
+                                              )
+                                              setDraggedEvent({
+                                                activityId: activity.id,
+                                                eventId: event.id,
+                                              })
+                                            }}
+                                            onDragEnd={() => {
+                                              setDraggedEvent(undefined)
+                                              setDragOverEventId(undefined)
+                                            }}
+                                          >
+                                            <GripVertical
+                                              aria-hidden="true"
+                                              size={18}
+                                            />
+                                          </button>
+                                          <button
+                                            className="icon-button"
+                                            type="button"
+                                            aria-label={`Move event ${position} up`}
+                                            disabled={eventIndex === 0}
+                                            onClick={() =>
+                                              moveEvent(
+                                                path,
+                                                eventIndex,
+                                                eventIndex - 1,
+                                              )
+                                            }
+                                          >
+                                            <ChevronUp
+                                              aria-hidden="true"
+                                              size={18}
+                                            />
+                                          </button>
+                                          <button
+                                            className="icon-button"
+                                            type="button"
+                                            aria-label={`Move event ${position} down`}
+                                            disabled={
+                                              eventIndex ===
+                                              activity.events.length - 1
+                                            }
+                                            onClick={() =>
+                                              moveEvent(
+                                                path,
+                                                eventIndex,
+                                                eventIndex + 1,
+                                              )
+                                            }
+                                          >
+                                            <ChevronDown
+                                              aria-hidden="true"
+                                              size={18}
+                                            />
+                                          </button>
+                                          <button
+                                            className="icon-button"
+                                            type="button"
+                                            aria-label={`Duplicate event ${position}`}
+                                            onClick={() =>
+                                              copyEvent(path, event.id)
+                                            }
+                                          >
+                                            <Copy
+                                              aria-hidden="true"
+                                              size={17}
+                                            />
+                                          </button>
+                                          <button
+                                            className="icon-button remove-event-button"
+                                            type="button"
+                                            aria-label={`Remove event ${position}`}
+                                            onClick={() =>
+                                              removeEvent(path, event.id)
+                                            }
+                                          >
+                                            <Trash2
+                                              aria-hidden="true"
+                                              size={18}
+                                            />
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      <div
+                                        className={
+                                          isAttack
+                                            ? 'attack-body'
+                                            : 'saving-body'
+                                        }
+                                      >
+                                        {isAttack ? (
+                                          <AttackRollFields
+                                            event={event}
+                                            errors={evaluation.errors}
+                                            update={(field, value) =>
+                                              updateEvent(
+                                                path,
+                                                event.id,
+                                                field,
+                                                value,
+                                              )
+                                            }
+                                          />
+                                        ) : (
+                                          <SavingThrowFields
+                                            event={event}
+                                            errors={evaluation.errors}
+                                            update={(field, value) =>
+                                              updateEvent(
+                                                path,
+                                                event.id,
+                                                field,
+                                                value,
+                                              )
+                                            }
+                                          />
+                                        )}
+                                        <DamageFields
+                                          event={event}
+                                          errors={evaluation.errors}
+                                          update={(field, value) =>
+                                            updateEvent(
+                                              path,
+                                              event.id,
+                                              field,
+                                              value,
+                                            )
+                                          }
+                                          updatePool={(poolId, field, value) =>
+                                            updateDamagePool(
+                                              path,
+                                              event.id,
+                                              poolId,
+                                              field,
+                                              value,
+                                            )
+                                          }
+                                          addPool={() =>
+                                            addDamagePool(path, event.id)
+                                          }
+                                          removePool={(poolId) =>
+                                            removeDamagePool(
+                                              path,
+                                              event.id,
+                                              poolId,
+                                            )
+                                          }
+                                        />
+                                        <ConditionFields
+                                          event={event}
+                                          update={(field, value) =>
+                                            updateEvent(
+                                              path,
+                                              event.id,
+                                              field,
+                                              value,
+                                            )
+                                          }
+                                        />
+                                      </div>
+
+                                      <div
+                                        className="attack-results"
+                                        aria-live="polite"
+                                      >
+                                        <span>
+                                          {isAttack
+                                            ? 'Hit chance'
+                                            : 'Save chance'}
+                                          <strong>
+                                            {result
+                                              ? percentFormatter.format(
+                                                  result.successProbability,
+                                                )
+                                              : '—'}
+                                          </strong>
+                                        </span>
+                                        {isAttack ? (
+                                          <span>
+                                            Critical chance
+                                            <strong>
+                                              {result
+                                                ? percentFormatter.format(
+                                                    result.criticalProbability ??
+                                                      0,
+                                                  )
+                                                : '—'}
+                                            </strong>
+                                          </span>
+                                        ) : null}
+                                        <span>
+                                          Expected damage against {target}
+                                          <strong>
+                                            {result
+                                              ? numberFormatter.format(
+                                                  result.outcome.expectedDamage,
+                                                )
+                                              : '—'}
+                                          </strong>
+                                        </span>
+                                        {result?.conditionApplications.map(
+                                          (application) => (
+                                            <span key={application.condition}>
+                                              {
+                                                CONDITION_LABELS[
+                                                  application.condition
+                                                ]
+                                              }{' '}
+                                              applied
+                                              <strong>
+                                                {percentFormatter.format(
+                                                  application.probability,
+                                                )}
+                                              </strong>
+                                            </span>
+                                          ),
+                                        )}
+                                      </div>
+                                    </article>
+                                  </li>
+                                )
+                              })}
+                            </ol>
+
+                            <div
+                              className={
+                                activity.events.length === 0
+                                  ? 'activity-empty'
+                                  : 'add-event'
+                              }
+                            >
+                              {activity.events.length === 0 && (
+                                <p>No events in this activity yet.</p>
+                              )}
+                              <button
+                                className="add-button"
+                                type="button"
+                                aria-expanded={
+                                  chooserActivityId === activity.id
+                                }
+                                aria-controls={`${activity.id}-event-chooser`}
+                                onClick={() =>
+                                  setChooserActivityId((current) =>
+                                    current === activity.id
+                                      ? undefined
+                                      : activity.id,
+                                  )
+                                }
+                              >
+                                {chooserActivityId === activity.id ? (
+                                  <X aria-hidden="true" size={19} />
+                                ) : (
+                                  <Plus aria-hidden="true" size={19} />
+                                )}
+                                {chooserActivityId === activity.id
+                                  ? 'Close'
+                                  : 'Add event'}
+                              </button>
+                              {chooserActivityId === activity.id && (
+                                <div
+                                  className="event-chooser"
+                                  id={`${activity.id}-event-chooser`}
+                                >
+                                  <EventTypeButtons
+                                    onSelect={(type) => addEvent(path, type)}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </section>
+                        )
+                      })}
+                    </div>
+                    {turn.activities.length === 0 && (
+                      <p className="nested-empty">
+                        No activities in this turn yet.
+                      </p>
+                    )}
+                    <div
+                      className="nested-add-actions"
+                      aria-label={`Add activity to ${turn.owner} turn`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          addActivity(round.id, turn.id, turn.owner, 'action')
+                        }
+                      >
+                        <Plus aria-hidden="true" size={16} />
+                        Add action
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          addActivity(
+                            round.id,
+                            turn.id,
+                            turn.owner,
+                            'bonus-action',
+                          )
+                        }
+                      >
+                        <Plus aria-hidden="true" size={16} />
+                        Add bonus action
+                      </button>
+                    </div>
+                  </section>
+                ))}
+              </div>
+              {round.turns.length === 0 && (
+                <p className="nested-empty">No turns in this round yet.</p>
+              )}
+              <div
+                className="nested-add-actions"
+                aria-label={`Add turn to round ${roundIndex + 1}`}
+              >
+                <button
+                  type="button"
+                  onClick={() => addTurn(round.id, 'player')}
+                >
+                  <Plus aria-hidden="true" size={16} />
+                  Add player turn
+                </button>
+                <button
+                  type="button"
+                  onClick={() => addTurn(round.id, 'enemy')}
+                >
+                  <Plus aria-hidden="true" size={16} />
+                  Add enemy turn
+                </button>
+              </div>
+            </section>
+          ))}
+        </div>
+
+        {rounds.length === 0 && (
           <div className="empty-state">
             <div className="empty-state-icon">
               <Plus aria-hidden="true" size={24} />
             </div>
-            <h3>Start your sequence</h3>
-            <p>Choose the first event you want to model.</p>
-            <div className="empty-event-options">
-              <EventTypeButtons onSelect={addEvent} />
-            </div>
-          </div>
-        ) : (
-          <div className="add-event">
-            <button
-              className="add-button"
-              type="button"
-              aria-expanded={isChooserOpen}
-              aria-controls="event-chooser"
-              onClick={() => setChooserOpen((current) => !current)}
-            >
-              {isChooserOpen ? (
-                <X aria-hidden="true" size={19} />
-              ) : (
-                <Plus aria-hidden="true" size={19} />
-              )}
-              {isChooserOpen ? 'Close' : 'Add event'}
-            </button>
-            {isChooserOpen && (
-              <div className="event-chooser" id="event-chooser">
-                <EventTypeButtons onSelect={addEvent} />
-              </div>
-            )}
+            <h3>Start your combat timeline</h3>
+            <p>Add a round, then choose its turns, activities, and events.</p>
           </div>
         )}
+        <div className="add-round">
+          <button className="add-button" type="button" onClick={addRound}>
+            <Plus aria-hidden="true" size={19} />
+            Add round
+          </button>
+        </div>
       </section>
     </main>
   )

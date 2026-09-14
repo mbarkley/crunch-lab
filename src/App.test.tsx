@@ -56,12 +56,13 @@ describe('App', () => {
 
     expect(screen.queryByRole('article')).not.toBeInTheDocument()
     expect(
-      screen.getByRole('heading', { name: /start your sequence/i }),
+      screen.getByText(/no events in this activity yet/i),
     ).toBeInTheDocument()
     expect(
       screen.queryByText(/expected damage against/i),
     ).not.toBeInTheDocument()
 
+    await user.click(screen.getByRole('button', { name: /^add event$/i }))
     await user.click(screen.getByRole('button', { name: 'Enemy saving throw' }))
 
     expect(
@@ -377,5 +378,86 @@ describe('App', () => {
       .closest('aside')!
     expect(within(vexAggregate).getByText('0.55')).toBeInTheDocument()
     expect(within(sapAggregate).getByText('0.45')).toBeInTheDocument()
+  })
+
+  it('starts with the guided round, player turn, action hierarchy', () => {
+    render(<App />)
+
+    const round = screen.getByRole('region', { name: 'Round 1' })
+    const turn = within(round).getByRole('region', { name: 'Player turn' })
+    const activity = within(turn).getByRole('region', { name: 'Action' })
+    expect(
+      within(activity).getByRole('article', { name: /player attack/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('allows empty containers and adds any event type contextually', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /remove activity 1/i }))
+    const playerTurn = screen.getByRole('region', { name: 'Player turn' })
+    expect(
+      within(playerTurn).getByText(/no activities in this turn yet/i),
+    ).toBeInTheDocument()
+
+    await user.click(
+      within(playerTurn).getByRole('button', { name: /add bonus action/i }),
+    )
+    const bonusAction = within(playerTurn).getByRole('region', {
+      name: 'Bonus action',
+    })
+    expect(
+      within(bonusAction).getByText(/no events in this activity yet/i),
+    ).toBeInTheDocument()
+
+    await user.click(
+      within(bonusAction).getByRole('button', { name: /^add event$/i }),
+    )
+    await user.click(
+      within(bonusAction).getByRole('button', { name: 'Enemy saving throw' }),
+    )
+    expect(
+      within(bonusAction).getByRole('article', {
+        name: /enemy saving throw/i,
+      }),
+    ).toBeInTheDocument()
+  })
+
+  it('adds, duplicates, reorders, and removes nested siblings', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /add enemy turn/i }))
+    const enemyTurn = screen.getByRole('region', { name: 'Enemy turn' })
+    await user.click(
+      within(enemyTurn).getByRole('button', { name: /^add action$/i }),
+    )
+    expect(
+      within(enemyTurn).getByRole('region', { name: 'Action' }),
+    ).toBeInTheDocument()
+
+    await user.click(
+      screen.getByRole('button', { name: /move enemy turn 2 up/i }),
+    )
+    const firstRound = screen.getByRole('region', { name: 'Round 1' })
+    expect(
+      within(firstRound)
+        .getAllByRole('region', { name: /turn$/i })
+        .map((region) => region.getAttribute('aria-labelledby')),
+    ).toEqual(['turn-2-title', 'turn-1-title'])
+
+    await user.click(screen.getByRole('button', { name: /duplicate round 1/i }))
+    expect(
+      screen.getAllByRole('region', { name: /^round \d+$/i }),
+    ).toHaveLength(2)
+    expect(
+      screen.getAllByRole('article', { name: /player attack/i }),
+    ).toHaveLength(2)
+
+    await user.click(screen.getByRole('button', { name: /remove round 2/i }))
+    expect(
+      screen.getAllByRole('region', { name: /^round \d+$/i }),
+    ).toHaveLength(1)
   })
 })

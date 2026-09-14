@@ -20,9 +20,9 @@ Crunch Lab is a visual, browser-based workbench for modeling probabilities of di
 
 ## Working now
 
-The functional editor models an ordered sequence of player and enemy events. Attacks configure a target armor class, attack modifier, normal/advantage/disadvantage roll mode, and one or more damage dice pools with a shared modifier. Attack rolls follow the natural 1 miss and natural 20 Critical Hit rules. A Critical Hit rolls every configured damage die twice and adds the shared modifier once; attack results show both hit and critical probabilities.
+The functional editor models combat as nested rounds, player or enemy turns, Action or Bonus Action activities, and ordered player and enemy events. Containers can be empty, duplicated, deleted, and reordered among their siblings. Attacks configure a target armor class, attack modifier, normal/advantage/disadvantage roll mode, and one or more damage dice pools with a shared modifier. Attack rolls follow the natural 1 miss and natural 20 Critical Hit rules. A Critical Hit rolls every configured damage die twice and adds the shared modifier once; attack results show both hit and critical probabilities.
 
-Events can be duplicated, deleted, and reordered with drag and drop or the move controls. An empty sequence offers all event types as starting points.
+Events can be duplicated, deleted, and reordered within their activity with drag and drop or the move controls. Every event type can be placed in either activity type, and contextual controls add rounds, turns, activities, and events.
 
 Player and enemy saving throws configure a save DC, save modifier, one or more damage dice pools, and the damage taken on failure or success. A consequence can apply full damage, half the combined damage rounded down, or no damage.
 
