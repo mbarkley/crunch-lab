@@ -85,6 +85,7 @@ export interface ExpectedConditionApplications {
 
 export interface EventResult {
   readonly successProbability: number
+  readonly criticalProbability?: number
   readonly outcome: Outcome
   readonly conditionApplications: readonly ConditionApplication[]
 }
@@ -108,6 +109,7 @@ interface SequenceState {
 interface EventTransition {
   readonly state: SequenceState
   readonly success: boolean
+  readonly critical: boolean
   readonly expectedDamage: number
   readonly appliedConditions: readonly ConditionType[]
 }
@@ -159,12 +161,12 @@ function validateDamageRoll(config: DamageRollConfig) {
   assertInteger(config.damageModifier, 'Damage modifier')
 }
 
-function damageDistribution(config: DamageRollConfig) {
+function damageDistribution(config: DamageRollConfig, diceMultiplier = 1) {
   validateDamageRoll(config)
   const diceTotal = config.damagePools.reduce(
     (total, pool) =>
       total.combine(
-        sumDice(pool.diceCount, pool.dieSides),
+        sumDice(pool.diceCount * diceMultiplier, pool.dieSides),
         (left, right) => left + right,
         (damage) => damage,
       ),
@@ -252,6 +254,7 @@ function transitionKey(transition: EventTransition) {
   return [
     stateKey(transition.state),
     transition.success,
+    transition.critical,
     transition.expectedDamage,
     ...transition.appliedConditions,
   ].join(':')
@@ -269,7 +272,8 @@ function attackTransitions(
     )
   }
   validateConditions(config.hitConditions)
-  const averageDamage = expectedDamage(damageDistribution(config), 'full')
+  const normalDamage = expectedDamage(damageDistribution(config), 'full')
+  const criticalDamage = expectedDamage(damageDistribution(config, 2), 'full')
   const attacker = config.type === 'player-attack' ? 'player' : 'enemy'
   const target = attacker === 'player' ? 'enemy' : 'player'
   const mode = effectiveRollMode(
@@ -284,8 +288,9 @@ function attackTransitions(
   }
 
   return attackRoll(mode).map((roll) => {
+    const critical = roll === 20
     const success =
-      roll === 20 ||
+      critical ||
       (roll !== 1 && roll + config.attackModifier >= config.armorClass)
     const appliedConditions = success
       ? [...new Set(config.hitConditions.map((condition) => condition.type))]
@@ -295,7 +300,8 @@ function attackTransitions(
         ? applyConditions(consumedState, target, appliedConditions)
         : consumedState,
       success,
-      expectedDamage: success ? averageDamage : 0,
+      critical,
+      expectedDamage: success ? (critical ? criticalDamage : normalDamage) : 0,
       appliedConditions,
     }
   }, transitionKey)
@@ -331,6 +337,7 @@ function savingThrowTransitions(
     return {
       state: applyConditions(state, target, appliedConditions),
       success,
+      critical: false,
       expectedDamage: expectedDamage(damage, consequence),
       appliedConditions,
     }
@@ -375,6 +382,13 @@ function resultFromTransitions(
     successProbability: normalizeCalculation(
       transitions.probabilityOf((transition) => transition.success),
     ),
+    ...(config.type === 'player-attack' || config.type === 'enemy-attack'
+      ? {
+          criticalProbability: normalizeCalculation(
+            transitions.probabilityOf((transition) => transition.critical),
+          ),
+        }
+      : {}),
     outcome: damageOutcome(
       target,
       transitions.expectedValue((transition) => transition.expectedDamage),

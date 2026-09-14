@@ -1165,6 +1165,18 @@ function App() {
                           : '—'}
                       </strong>
                     </span>
+                    {isAttack ? (
+                      <span>
+                        Critical chance
+                        <strong>
+                          {result
+                            ? percentFormatter.format(
+                                result.criticalProbability ?? 0,
+                              )
+                            : '—'}
+                        </strong>
+                      </span>
+                    ) : null}
                     <span>
                       Expected damage against {target}
                       <strong>

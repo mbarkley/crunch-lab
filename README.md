@@ -20,7 +20,7 @@ Crunch Lab is a visual, browser-based workbench for modeling probabilities of di
 
 ## Working now
 
-The functional editor models an ordered sequence of player and enemy events. Attacks configure a target armor class, attack modifier, normal/advantage/disadvantage roll mode, and one or more damage dice pools with a shared modifier. Attack rolls follow the natural 1 miss and natural 20 hit rules.
+The functional editor models an ordered sequence of player and enemy events. Attacks configure a target armor class, attack modifier, normal/advantage/disadvantage roll mode, and one or more damage dice pools with a shared modifier. Attack rolls follow the natural 1 miss and natural 20 Critical Hit rules. A Critical Hit rolls every configured damage die twice and adds the shared modifier once; attack results show both hit and critical probabilities.
 
 Events can be duplicated, deleted, and reordered with drag and drop or the move controls. An empty sequence offers all event types as starting points.
 
@@ -32,7 +32,7 @@ Every event produces a typed outcome. The summary groups expected damage against
 
 ## Deferred
 
-Named targets and multiple combatants, turn-based condition expiration, critical-hit damage, persistence, import/export, full probability charts, accounts, and a backend remain deferred.
+Named targets and multiple combatants, turn-based condition expiration, persistence, import/export, full probability charts, accounts, and a backend remain deferred.
 
 ## Development
 
