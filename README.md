@@ -20,11 +20,11 @@ Crunch Lab is a visual, browser-based workbench for modeling probabilities of di
 
 ## Working now
 
-The functional editor models combat as nested rounds, player or enemy turns, Action or Bonus Action activities, and ordered player and enemy events. Containers can be empty, duplicated, deleted, and reordered among their siblings. Attacks configure a target armor class, attack modifier, normal/advantage/disadvantage roll mode, and one or more damage dice pools with a shared modifier. Attack rolls follow the natural 1 miss and natural 20 Critical Hit rules. A Critical Hit rolls every configured damage die twice and adds the shared modifier once; attack results show both hit and critical probabilities.
+The functional editor models combat as nested rounds, player or enemy turns, Action or Bonus Action activities, and ordered player and enemy events. Containers can be empty, duplicated, deleted, and reordered among their siblings. Attacks configure a target armor class, attack modifier, normal/advantage/disadvantage roll mode, Cover, and one or more typed damage dice pools with independent modifiers. Attack rolls follow the natural 1 miss and natural 20 Critical Hit rules. A Critical Hit rolls every configured damage die twice and adds each pool modifier once; attack results show both hit and critical probabilities.
 
 Events can be duplicated, deleted, and reordered within their activity with drag and drop or the move controls. Every event type can be placed in either activity type, and contextual controls add rounds, turns, activities, and events.
 
-Player and enemy saving throws configure a save DC, save modifier, one or more damage dice pools, and the damage taken on failure or success. A consequence can apply full damage, half the combined damage rounded down, or no damage.
+Player and enemy saving throws configure a save DC, save ability, roll mode (including voluntary automatic failure), Cover, one or more typed damage dice pools, and the damage taken on failure or success. A consequence can apply full damage, half the combined damage rounded down, or no damage. Initial combatant state can provide typed damage Immunity, Resistance, Vulnerability, and Heroic Inspiration; defenses are applied to each exact damage outcome in rules order.
 
 Attacks can add Vex or Sap to their target on a hit. Saving throws can add either condition to their target on failure, success, or both. Vex grants advantage to the next attack against its target, while Sap gives disadvantage to the next attack made by its target. Applicable conditions are consumed by that attack, and opposing advantage and disadvantage cancel.
 
@@ -32,7 +32,7 @@ Every event produces a typed outcome. The summary groups expected damage against
 
 ## Deferred
 
-Named targets and multiple combatants, turn-based condition expiration, persistence, import/export, full probability charts, accounts, and a backend remain deferred.
+Named targets and multiple combatants, turn-based condition expiration, persistence, import/export, full probability charts, accounts, and a backend remain deferred. Total Cover, spatial targeting, hit points, and shared damage rolls across multiple targets remain outside the current model.
 
 ## Development
 

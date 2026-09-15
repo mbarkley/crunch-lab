@@ -336,7 +336,9 @@
 
 .damage-expression {
   display: grid;
-  grid-template-columns: minmax(72px, 1fr) auto minmax(82px, 1fr);
+  grid-template-columns:
+    minmax(52px, 0.7fr) auto minmax(60px, 0.8fr) minmax(72px, 0.8fr)
+    minmax(110px, 1.3fr);
   gap: 9px;
   align-items: end;
 }
@@ -673,12 +675,16 @@ input[aria-invalid='true'] {
 .roll-fields,
 .consequence-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
 .roll-fields {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   grid-column: 1 / 3;
+}
+
+.consequence-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .consequence-section {
@@ -964,6 +970,10 @@ input[aria-invalid='true'] {
   .condition-section {
     padding-right: 14px;
     padding-left: 14px;
+  }
+
+  .damage-expression {
+    grid-template-columns: minmax(52px, 1fr) auto minmax(64px, 1fr);
   }
 }
 

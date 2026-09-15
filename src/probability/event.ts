@@ -1,29 +1,64 @@
-import { Distribution, keepHighest, keepLowest, sumDice } from './distribution'
+import { Distribution } from './distribution'
 
 export type AttackRollMode = 'normal' | 'advantage' | 'disadvantage'
+export type SavingThrowRollMode = AttackRollMode | 'automatic-failure'
+export type Ability =
+  | 'strength'
+  | 'dexterity'
+  | 'constitution'
+  | 'intelligence'
+  | 'wisdom'
+  | 'charisma'
+export type Cover = 'none' | 'half' | 'three-quarters'
+export type DamageType =
+  | 'acid'
+  | 'bludgeoning'
+  | 'cold'
+  | 'fire'
+  | 'force'
+  | 'lightning'
+  | 'necrotic'
+  | 'piercing'
+  | 'poison'
+  | 'psychic'
+  | 'radiant'
+  | 'slashing'
+  | 'thunder'
 export type ConditionType = 'vex' | 'sap'
 export type ConditionConfig =
   { readonly type: 'vex' } | { readonly type: 'sap' }
 export type DamageConsequence = 'none' | 'half' | 'full'
 
 export interface DamagePoolConfig {
+  readonly id: string
   readonly diceCount: number
   readonly dieSides: number
+  readonly modifier: number
+  readonly damageType: DamageType
 }
 
 export interface DamageRollConfig {
   readonly damagePools: readonly DamagePoolConfig[]
-  readonly damageModifier: number
 }
+
+export type HeroicInspirationPolicy =
+  | { readonly type: 'd20-after-failure' }
+  | {
+      readonly type: 'damage-pool-threshold'
+      readonly damagePoolId: string
+      readonly threshold: number
+    }
 
 interface BaseEventConfig extends DamageRollConfig {
   readonly id: string
+  readonly heroicInspiration?: HeroicInspirationPolicy
 }
 
 interface BaseAttackConfig extends BaseEventConfig {
   readonly armorClass: number
   readonly attackModifier: number
   readonly rollMode: AttackRollMode
+  readonly cover: Cover
   readonly hitConditions: readonly ConditionConfig[]
 }
 
@@ -40,6 +75,9 @@ export type AttackConfig = PlayerAttackConfig | EnemyAttackConfig
 interface BaseSavingThrowConfig extends BaseEventConfig {
   readonly saveDc: number
   readonly saveModifier: number
+  readonly saveAbility: Ability
+  readonly rollMode: SavingThrowRollMode
+  readonly cover: Cover
   readonly failureDamage: DamageConsequence
   readonly successDamage: DamageConsequence
   readonly failureConditions: readonly ConditionConfig[]
@@ -63,6 +101,10 @@ export type ActivityType = 'action' | 'bonus-action'
 export interface CombatantState {
   readonly vex: boolean
   readonly sap: boolean
+  readonly heroicInspiration: boolean
+  readonly damageImmunities: readonly DamageType[]
+  readonly damageResistances: readonly DamageType[]
+  readonly damageVulnerabilities: readonly DamageType[]
 }
 
 export interface SequenceState {
@@ -136,8 +178,19 @@ interface EventTransition {
   readonly state: SequenceState
   readonly success: boolean
   readonly critical: boolean
-  readonly expectedDamage: number
+  readonly exactDamage: number
   readonly appliedConditions: readonly ConditionType[]
+}
+
+interface DamagePoolOutcome {
+  readonly damageType: DamageType
+  readonly damage: number
+  readonly inspirationSpent: boolean
+}
+
+interface DamageOutcome {
+  readonly damage: number
+  readonly inspirationSpent: boolean
 }
 
 const CALCULATION_PRECISION = 1e12
@@ -146,6 +199,34 @@ const ATTACK_ROLL_MODES: readonly AttackRollMode[] = [
   'advantage',
   'disadvantage',
 ]
+const SAVE_ROLL_MODES: readonly SavingThrowRollMode[] = [
+  ...ATTACK_ROLL_MODES,
+  'automatic-failure',
+]
+const ABILITIES: readonly Ability[] = [
+  'strength',
+  'dexterity',
+  'constitution',
+  'intelligence',
+  'wisdom',
+  'charisma',
+]
+const COVER_TYPES: readonly Cover[] = ['none', 'half', 'three-quarters']
+const DAMAGE_TYPES: readonly DamageType[] = [
+  'acid',
+  'bludgeoning',
+  'cold',
+  'fire',
+  'force',
+  'lightning',
+  'necrotic',
+  'piercing',
+  'poison',
+  'psychic',
+  'radiant',
+  'slashing',
+  'thunder',
+]
 const CONDITION_TYPES: readonly ConditionType[] = ['vex', 'sap']
 const DAMAGE_CONSEQUENCES: readonly DamageConsequence[] = [
   'none',
@@ -153,8 +234,22 @@ const DAMAGE_CONSEQUENCES: readonly DamageConsequence[] = [
   'full',
 ]
 export const INITIAL_SEQUENCE_STATE: SequenceState = {
-  player: { vex: false, sap: false },
-  enemy: { vex: false, sap: false },
+  player: {
+    vex: false,
+    sap: false,
+    heroicInspiration: false,
+    damageImmunities: [],
+    damageResistances: [],
+    damageVulnerabilities: [],
+  },
+  enemy: {
+    vex: false,
+    sap: false,
+    heroicInspiration: false,
+    damageImmunities: [],
+    damageResistances: [],
+    damageVulnerabilities: [],
+  },
 }
 
 function normalizeCalculation(value: number) {
@@ -176,46 +271,155 @@ function validateConditions(conditions: readonly ConditionConfig[]) {
   }
 }
 
+function validateDamageTypes(types: readonly DamageType[], name: string) {
+  for (const type of types) {
+    if (!DAMAGE_TYPES.includes(type)) {
+      throw new RangeError(`${name} contains an invalid damage type`)
+    }
+  }
+}
+
+function validateCombatantState(state: CombatantState) {
+  validateDamageTypes(state.damageImmunities, 'Damage immunities')
+  validateDamageTypes(state.damageResistances, 'Damage resistances')
+  validateDamageTypes(state.damageVulnerabilities, 'Damage vulnerabilities')
+}
+
 function validateDamageRoll(config: DamageRollConfig) {
   if (config.damagePools.length === 0) {
     throw new RangeError('Damage must include at least one dice pool')
   }
+  const ids = new Set<string>()
   for (const pool of config.damagePools) {
+    if (pool.id.length === 0) {
+      throw new RangeError('Damage pool ID must not be empty')
+    }
+    if (ids.has(pool.id)) {
+      throw new RangeError(`Duplicate damage pool ID: ${pool.id}`)
+    }
+    ids.add(pool.id)
     assertInteger(pool.diceCount, 'Damage dice count', 1)
     assertInteger(pool.dieSides, 'Damage die sides', 2)
+    assertInteger(pool.modifier, 'Damage modifier')
+    if (!DAMAGE_TYPES.includes(pool.damageType)) {
+      throw new RangeError('Damage pool must have a valid damage type')
+    }
   }
-  assertInteger(config.damageModifier, 'Damage modifier')
 }
 
-function damageDistribution(config: DamageRollConfig, diceMultiplier = 1) {
-  validateDamageRoll(config)
-  const diceTotal = config.damagePools.reduce(
-    (total, pool) =>
-      total.combine(
-        sumDice(pool.diceCount * diceMultiplier, pool.dieSides),
-        (left, right) => left + right,
-        (damage) => damage,
-      ),
-    Distribution.constant(0, (damage) => damage),
+function validateInspirationPolicy(config: EventConfig) {
+  const policy = config.heroicInspiration
+  if (!policy || policy.type === 'd20-after-failure') return
+  if (policy.type !== 'damage-pool-threshold') {
+    throw new RangeError('Invalid Heroic Inspiration policy')
+  }
+  assertInteger(policy.threshold, 'Damage reroll threshold')
+  if (!config.damagePools.some((pool) => pool.id === policy.damagePoolId)) {
+    throw new RangeError(
+      'Heroic Inspiration damage pool must belong to the event',
+    )
+  }
+}
+
+function rollDice(
+  count: number,
+  sides: number,
+): Distribution<readonly number[]> {
+  let rolls = Distribution.constant<readonly number[]>([], (values) =>
+    values.join(','),
   )
-  return diceTotal.map(
-    (damage) => Math.max(0, damage + config.damageModifier),
-    (damage) => damage,
+  for (let index = 0; index < count; index += 1) {
+    rolls = rolls.combine(
+      Distribution.die(sides),
+      (values, value) => [...values, value],
+      (values) => values.join(','),
+    )
+  }
+  return rolls
+}
+
+function poolDistribution(
+  pool: DamagePoolConfig,
+  diceMultiplier: number,
+  inspirationAvailable: boolean,
+  policy: HeroicInspirationPolicy | undefined,
+): Distribution<DamagePoolOutcome> {
+  const canReroll =
+    inspirationAvailable &&
+    policy?.type === 'damage-pool-threshold' &&
+    policy.damagePoolId === pool.id
+  return rollDice(pool.diceCount * diceMultiplier, pool.dieSides).flatMap(
+    (values) => {
+      const lowest = Math.min(...values)
+      if (!canReroll || lowest > policy.threshold) {
+        return Distribution.constant<DamagePoolOutcome>(
+          {
+            damageType: pool.damageType,
+            damage: Math.max(
+              0,
+              values.reduce((sum, value) => sum + value, 0) + pool.modifier,
+            ),
+            inspirationSpent: false,
+          },
+          (outcome) => `${outcome.damageType}:${outcome.damage}:false`,
+        )
+      }
+      const rerollIndex = values.indexOf(lowest)
+      return Distribution.die(pool.dieSides).map<DamagePoolOutcome>(
+        (reroll) => {
+          const replaced = [...values]
+          replaced[rerollIndex] = reroll
+          return {
+            damageType: pool.damageType,
+            damage: Math.max(
+              0,
+              replaced.reduce((sum, value) => sum + value, 0) + pool.modifier,
+            ),
+            inspirationSpent: true,
+          }
+        },
+        (outcome) => `${outcome.damageType}:${outcome.damage}:true`,
+      )
+    },
+    (outcome) =>
+      `${outcome.damageType}:${outcome.damage}:${outcome.inspirationSpent}`,
   )
 }
 
-function expectedDamage(
-  damage: Distribution<number>,
-  consequence: DamageConsequence,
-) {
+function coverBonus(cover: Cover) {
+  switch (cover) {
+    case 'none':
+      return 0
+    case 'half':
+      return 2
+    case 'three-quarters':
+      return 5
+  }
+}
+
+function applyDamageConsequence(value: number, consequence: DamageConsequence) {
   switch (consequence) {
     case 'none':
       return 0
     case 'half':
-      return damage.expectedValue((value) => Math.floor(value / 2))
+      return Math.floor(value / 2)
     case 'full':
-      return damage.expectedValue((value) => value)
+      return value
   }
+}
+
+function applyDamageDefenses(
+  value: number,
+  type: DamageType,
+  state: CombatantState,
+) {
+  if (state.damageImmunities.includes(type)) return 0
+  const resistant = state.damageResistances.includes(type)
+  const vulnerable = state.damageVulnerabilities.includes(type)
+  if (resistant && vulnerable) return value
+  let adjusted = resistant ? Math.floor(value / 2) : value
+  if (vulnerable) adjusted *= 2
+  return adjusted
 }
 
 function damageOutcome(target: 'enemies' | 'players', value: number): Outcome {
@@ -230,15 +434,82 @@ function damageOutcome(target: 'enemies' | 'players', value: number): Outcome {
       }
 }
 
-function attackRoll(mode: AttackRollMode) {
-  switch (mode) {
-    case 'normal':
-      return Distribution.die(20)
-    case 'advantage':
-      return keepHighest(2, 20, 1)
-    case 'disadvantage':
-      return keepLowest(2, 20, 1)
+function damageDistribution(
+  config: EventConfig,
+  targetState: CombatantState,
+  consequence: DamageConsequence,
+  diceMultiplier: number,
+  inspirationAvailable: boolean,
+): Distribution<DamageOutcome> {
+  validateDamageRoll(config)
+  validateInspirationPolicy(config)
+  if (consequence === 'none') {
+    return Distribution.constant(
+      { damage: 0, inspirationSpent: false },
+      (outcome) => `${outcome.damage}:false`,
+    )
   }
+  let distribution = Distribution.constant<readonly DamagePoolOutcome[]>(
+    [],
+    (values) => JSON.stringify(values),
+  )
+  for (const pool of config.damagePools) {
+    distribution = distribution.combine(
+      poolDistribution(
+        pool,
+        diceMultiplier,
+        inspirationAvailable,
+        config.heroicInspiration,
+      ),
+      (values, value) => [...values, value],
+      (values) => JSON.stringify(values),
+    )
+  }
+  return distribution.map(
+    (pools) => {
+      const byType = new Map<DamageType, number>()
+      for (const pool of pools) {
+        byType.set(
+          pool.damageType,
+          (byType.get(pool.damageType) ?? 0) + pool.damage,
+        )
+      }
+      let damage = 0
+      for (const [type, typedDamage] of byType) {
+        damage += applyDamageDefenses(
+          applyDamageConsequence(typedDamage, consequence),
+          type,
+          targetState,
+        )
+      }
+      return {
+        damage,
+        inspirationSpent: pools.some((pool) => pool.inspirationSpent),
+      }
+    },
+    (outcome) => `${outcome.damage}:${outcome.inspirationSpent}`,
+  )
+}
+
+function d20Rolls(mode: AttackRollMode): Distribution<readonly number[]> {
+  return rollDice(mode === 'normal' ? 1 : 2, 20)
+}
+
+function selectedD20(values: readonly number[], mode: AttackRollMode) {
+  return mode === 'disadvantage' ? Math.min(...values) : Math.max(...values)
+}
+
+function rerolledD20(values: readonly number[], mode: AttackRollMode) {
+  const selected = selectedD20(values, mode)
+  const selectedIndex = values.indexOf(selected)
+  return Distribution.die(20).map(
+    (reroll) => {
+      const replaced = [...values]
+      replaced[selectedIndex] = reroll
+      return selectedD20(replaced, mode)
+    },
+    (roll) => roll,
+  )
 }
 
 function effectiveRollMode(
@@ -267,13 +538,35 @@ function applyConditions(
   }
 }
 
+function spendInspiration(
+  state: SequenceState,
+  combatant: Combatant,
+  spent: boolean,
+): SequenceState {
+  if (!spent) return state
+  return {
+    ...state,
+    [combatant]: {
+      ...state[combatant],
+      heroicInspiration: false,
+    },
+  }
+}
+
 function stateKey(state: SequenceState) {
-  return [
-    state.player.vex,
-    state.player.sap,
-    state.enemy.vex,
-    state.enemy.sap,
-  ].join(':')
+  return (['player', 'enemy'] as const)
+    .map((combatant) => {
+      const value = state[combatant]
+      return [
+        value.vex,
+        value.sap,
+        value.heroicInspiration,
+        [...value.damageImmunities].sort().join(','),
+        [...value.damageResistances].sort().join(','),
+        [...value.damageVulnerabilities].sort().join(','),
+      ].join(':')
+    })
+    .join('|')
 }
 
 function transitionKey(transition: EventTransition) {
@@ -281,9 +574,18 @@ function transitionKey(transition: EventTransition) {
     stateKey(transition.state),
     transition.success,
     transition.critical,
-    transition.expectedDamage,
+    transition.exactDamage,
     ...transition.appliedConditions,
   ].join(':')
+}
+
+function attackSuccess(roll: number, config: AttackConfig) {
+  return (
+    roll === 20 ||
+    (roll !== 1 &&
+      roll + config.attackModifier >=
+        config.armorClass + coverBonus(config.cover))
+  )
 }
 
 function attackTransitions(
@@ -293,43 +595,83 @@ function attackTransitions(
   assertInteger(config.armorClass, 'Armor class', 1)
   assertInteger(config.attackModifier, 'Attack modifier')
   if (!ATTACK_ROLL_MODES.includes(config.rollMode)) {
-    throw new RangeError(
-      'Attack roll mode must be normal, advantage, or disadvantage',
-    )
+    throw new RangeError('Attack roll mode is invalid')
+  }
+  if (!COVER_TYPES.includes(config.cover)) {
+    throw new RangeError('Cover must be none, half, or three-quarters')
   }
   validateConditions(config.hitConditions)
-  const normalDamage = expectedDamage(damageDistribution(config), 'full')
-  const criticalDamage = expectedDamage(damageDistribution(config, 2), 'full')
-  const attacker = config.type === 'player-attack' ? 'player' : 'enemy'
-  const target = attacker === 'player' ? 'enemy' : 'player'
+  validateInspirationPolicy(config)
+  const attacker: Combatant =
+    config.type === 'player-attack' ? 'player' : 'enemy'
+  const target: Combatant = attacker === 'player' ? 'enemy' : 'player'
   const mode = effectiveRollMode(
     config.rollMode,
     state[target].vex,
     state[attacker].sap,
   )
+  const canRerollD20 =
+    state[attacker].heroicInspiration &&
+    config.heroicInspiration?.type === 'd20-after-failure'
   const consumedState: SequenceState = {
     ...state,
     [attacker]: { ...state[attacker], sap: false },
     [target]: { ...state[target], vex: false },
   }
 
-  return attackRoll(mode).map((roll) => {
-    const critical = roll === 20
-    const success =
-      critical ||
-      (roll !== 1 && roll + config.attackModifier >= config.armorClass)
-    const appliedConditions = success
-      ? [...new Set(config.hitConditions.map((condition) => condition.type))]
-      : []
-    return {
-      state: success
-        ? applyConditions(consumedState, target, appliedConditions)
-        : consumedState,
-      success,
-      critical,
-      expectedDamage: success ? (critical ? criticalDamage : normalDamage) : 0,
-      appliedConditions,
-    }
+  return d20Rolls(mode).flatMap((values) => {
+    const original = selectedD20(values, mode)
+    const initialSuccess = attackSuccess(original, config)
+    const resolvedRolls =
+      !initialSuccess && canRerollD20
+        ? rerolledD20(values, mode)
+        : Distribution.constant(original, (roll) => roll)
+    return resolvedRolls.flatMap((roll) => {
+      const success = attackSuccess(roll, config)
+      const critical = success && roll === 20
+      const d20Spent = !initialSuccess && canRerollD20
+      const stateAfterD20 = spendInspiration(consumedState, attacker, d20Spent)
+      if (!success) {
+        return Distribution.constant(
+          {
+            state: stateAfterD20,
+            success: false,
+            critical: false,
+            exactDamage: 0,
+            appliedConditions: [],
+          },
+          transitionKey,
+        )
+      }
+      const appliedConditions = [
+        ...new Set(config.hitConditions.map((condition) => condition.type)),
+      ]
+      const stateAfterConditions = applyConditions(
+        stateAfterD20,
+        target,
+        appliedConditions,
+      )
+      return damageDistribution(
+        config,
+        state[target],
+        'full',
+        critical ? 2 : 1,
+        stateAfterD20[attacker].heroicInspiration,
+      ).map(
+        (damage) => ({
+          state: spendInspiration(
+            stateAfterConditions,
+            attacker,
+            damage.inspirationSpent,
+          ),
+          success: true,
+          critical,
+          exactDamage: damage.damage,
+          appliedConditions,
+        }),
+        transitionKey,
+      )
+    }, transitionKey)
   }, transitionKey)
 }
 
@@ -339,6 +681,15 @@ function savingThrowTransitions(
 ): Distribution<EventTransition> {
   assertInteger(config.saveDc, 'Save DC', 1)
   assertInteger(config.saveModifier, 'Save modifier')
+  if (!ABILITIES.includes(config.saveAbility)) {
+    throw new RangeError('Saving throw ability is invalid')
+  }
+  if (!SAVE_ROLL_MODES.includes(config.rollMode)) {
+    throw new RangeError('Saving throw roll mode is invalid')
+  }
+  if (!COVER_TYPES.includes(config.cover)) {
+    throw new RangeError('Cover must be none, half, or three-quarters')
+  }
   if (!DAMAGE_CONSEQUENCES.includes(config.failureDamage)) {
     throw new RangeError('Failure damage must be none, half, or full')
   }
@@ -347,26 +698,71 @@ function savingThrowTransitions(
   }
   validateConditions(config.failureConditions)
   validateConditions(config.successConditions)
-  const damage = damageDistribution(config)
-  const target = config.type === 'player-saving-throw' ? 'player' : 'enemy'
+  validateInspirationPolicy(config)
+  const target: Combatant =
+    config.type === 'player-saving-throw' ? 'player' : 'enemy'
+  const source: Combatant = target === 'player' ? 'enemy' : 'player'
+  const automaticFailure = config.rollMode === 'automatic-failure'
+  const mode: AttackRollMode = automaticFailure ? 'normal' : config.rollMode
+  const canRerollD20 =
+    !automaticFailure &&
+    state[target].heroicInspiration &&
+    config.heroicInspiration?.type === 'd20-after-failure'
+  const bonus =
+    config.saveAbility === 'dexterity' ? coverBonus(config.cover) : 0
+  const succeeds = (roll: number) =>
+    roll + config.saveModifier + bonus >= config.saveDc
+  const rolls = automaticFailure
+    ? Distribution.constant<readonly number[]>([0], (values) =>
+        values.join(','),
+      )
+    : d20Rolls(mode)
 
-  return Distribution.die(20).map((roll) => {
-    const success = roll + config.saveModifier >= config.saveDc
-    const consequence = success ? config.successDamage : config.failureDamage
-    const appliedConditions = [
-      ...new Set(
-        (success ? config.successConditions : config.failureConditions).map(
-          (condition) => condition.type,
+  return rolls.flatMap((values) => {
+    const original = automaticFailure ? 0 : selectedD20(values, mode)
+    const initialSuccess = !automaticFailure && succeeds(original)
+    const resolvedRolls =
+      !initialSuccess && canRerollD20
+        ? rerolledD20(values, mode)
+        : Distribution.constant(original, (roll) => roll)
+    return resolvedRolls.flatMap((roll) => {
+      const success = !automaticFailure && succeeds(roll)
+      const d20Spent = !initialSuccess && canRerollD20
+      const stateAfterD20 = spendInspiration(state, target, d20Spent)
+      const consequence = success ? config.successDamage : config.failureDamage
+      const appliedConditions = [
+        ...new Set(
+          (success ? config.successConditions : config.failureConditions).map(
+            (condition) => condition.type,
+          ),
         ),
-      ),
-    ]
-    return {
-      state: applyConditions(state, target, appliedConditions),
-      success,
-      critical: false,
-      expectedDamage: expectedDamage(damage, consequence),
-      appliedConditions,
-    }
+      ]
+      const stateAfterConditions = applyConditions(
+        stateAfterD20,
+        target,
+        appliedConditions,
+      )
+      return damageDistribution(
+        config,
+        state[target],
+        consequence,
+        1,
+        stateAfterD20[source].heroicInspiration,
+      ).map(
+        (damage) => ({
+          state: spendInspiration(
+            stateAfterConditions,
+            source,
+            damage.inspirationSpent,
+          ),
+          success,
+          critical: false,
+          exactDamage: damage.damage,
+          appliedConditions,
+        }),
+        transitionKey,
+      )
+    }, transitionKey)
   }, transitionKey)
 }
 
@@ -417,7 +813,7 @@ function resultFromTransitions(
       : {}),
     outcome: damageOutcome(
       target,
-      transitions.expectedValue((transition) => transition.expectedDamage),
+      transitions.expectedValue((transition) => transition.exactDamage),
     ),
     conditionApplications: configuredConditions(config).map((condition) => ({
       condition,
@@ -456,6 +852,8 @@ function assertUniqueId(id: string, kind: string, ids: Set<string>) {
 }
 
 function validateSequence(config: SequenceConfig) {
+  validateCombatantState(config.initialState.player)
+  validateCombatantState(config.initialState.enemy)
   const ids = new Set<string>()
   for (const round of config.rounds) {
     assertUniqueId(round.id, 'Round', ids)
