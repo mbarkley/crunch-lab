@@ -15,7 +15,7 @@ import {
   ConditionPicker,
   type ConditionPickerOption,
 } from './components/ConditionPicker'
-import { StateSummary } from './components/StateSummary'
+import { StateSummary, StateTransition } from './components/StateSummary'
 import type {
   Ability,
   ActivityType,
@@ -3688,117 +3688,116 @@ function App() {
                                         className="attack-results"
                                         aria-live="polite"
                                       >
-                                        <span>
-                                          Execution chance
-                                          <strong>
-                                            {result
-                                              ? percentFormatter.format(
-                                                  result.executionProbability,
-                                                )
-                                              : '—'}
-                                          </strong>
-                                        </span>
-                                        {event.type === 'player-initiative' ||
-                                        event.type === 'enemy-initiative' ? (
+                                        <div className="event-result-metrics">
                                           <span>
-                                            Expected initiative
-                                            <strong>
-                                              {result?.outcome.type ===
-                                              'expected-initiative'
-                                                ? numberFormatter.format(
-                                                    result.outcome
-                                                      .expectedTotal,
-                                                  )
-                                                : '—'}
-                                            </strong>
-                                          </span>
-                                        ) : null}
-                                        <span>
-                                          {isAttack
-                                            ? 'Hit chance'
-                                            : event.type ===
-                                                  'player-saving-throw' ||
-                                                event.type ===
-                                                  'enemy-saving-throw' ||
-                                                isAbilityCheckDraft(event)
-                                              ? 'Success chance'
-                                              : 'Result'}
-                                          <strong>
-                                            {result &&
-                                            (isAttack ||
-                                              isSavingThrowDraft(event) ||
-                                              isAbilityCheckDraft(event))
-                                              ? percentFormatter.format(
-                                                  result.successProbability,
-                                                )
-                                              : result?.outcome.type ===
-                                                  'no-damage'
-                                                ? 'Completed'
-                                                : '—'}
-                                          </strong>
-                                        </span>
-                                        {isAttack ? (
-                                          <span>
-                                            Critical chance
+                                            Execution chance
                                             <strong>
                                               {result
                                                 ? percentFormatter.format(
-                                                    result.criticalProbability ??
-                                                      0,
+                                                    result.executionProbability,
                                                   )
                                                 : '—'}
                                             </strong>
                                           </span>
-                                        ) : null}
-                                        {result?.outcome.type ===
-                                          'expected-damage-against-enemies' ||
-                                        result?.outcome.type ===
-                                          'expected-damage-against-players' ? (
+                                          {event.type === 'player-initiative' ||
+                                          event.type === 'enemy-initiative' ? (
+                                            <span>
+                                              Expected initiative
+                                              <strong>
+                                                {result?.outcome.type ===
+                                                'expected-initiative'
+                                                  ? numberFormatter.format(
+                                                      result.outcome
+                                                        .expectedTotal,
+                                                    )
+                                                  : '—'}
+                                              </strong>
+                                            </span>
+                                          ) : null}
                                           <span>
-                                            Expected damage against {target}
+                                            {isAttack
+                                              ? 'Hit chance'
+                                              : event.type ===
+                                                    'player-saving-throw' ||
+                                                  event.type ===
+                                                    'enemy-saving-throw' ||
+                                                  isAbilityCheckDraft(event)
+                                                ? 'Success chance'
+                                                : 'Result'}
                                             <strong>
-                                              {numberFormatter.format(
-                                                result.outcome.expectedDamage,
-                                              )}
+                                              {result &&
+                                              (isAttack ||
+                                                isSavingThrowDraft(event) ||
+                                                isAbilityCheckDraft(event))
+                                                ? percentFormatter.format(
+                                                    result.successProbability,
+                                                  )
+                                                : result?.outcome.type ===
+                                                    'no-damage'
+                                                  ? 'Completed'
+                                                  : '—'}
                                             </strong>
                                           </span>
-                                        ) : result?.outcome.type ===
-                                          'no-damage' ? (
-                                          <span>
-                                            Damage outcome
-                                            <strong>No damage</strong>
-                                          </span>
-                                        ) : null}
-                                        {result?.conditionApplications.map(
-                                          (application) => (
-                                            <span key={application.condition}>
-                                              {
-                                                CONDITION_LABELS[
-                                                  application.condition
-                                                ]
-                                              }{' '}
-                                              applied
+                                          {isAttack ? (
+                                            <span>
+                                              Critical chance
                                               <strong>
-                                                {percentFormatter.format(
-                                                  application.probability,
+                                                {result
+                                                  ? percentFormatter.format(
+                                                      result.criticalProbability ??
+                                                        0,
+                                                    )
+                                                  : '—'}
+                                              </strong>
+                                            </span>
+                                          ) : null}
+                                          {result?.outcome.type ===
+                                            'expected-damage-against-enemies' ||
+                                          result?.outcome.type ===
+                                            'expected-damage-against-players' ? (
+                                            <span>
+                                              Expected damage against {target}
+                                              <strong>
+                                                {numberFormatter.format(
+                                                  result.outcome.expectedDamage,
                                                 )}
                                               </strong>
                                             </span>
-                                          ),
-                                        )}
-                                        {renderableResult?.stateBefore && (
-                                          <StateSummary
-                                            label="State before"
-                                            state={renderableResult.stateBefore}
-                                          />
-                                        )}
-                                        {renderableResult?.stateAfter && (
-                                          <StateSummary
-                                            label="State after"
-                                            state={renderableResult.stateAfter}
-                                          />
-                                        )}
+                                          ) : result?.outcome.type ===
+                                            'no-damage' ? (
+                                            <span>
+                                              Damage outcome
+                                              <strong>No damage</strong>
+                                            </span>
+                                          ) : null}
+                                          {result?.conditionApplications.map(
+                                            (application) => (
+                                              <span key={application.condition}>
+                                                {
+                                                  CONDITION_LABELS[
+                                                    application.condition
+                                                  ]
+                                                }{' '}
+                                                applied
+                                                <strong>
+                                                  {percentFormatter.format(
+                                                    application.probability,
+                                                  )}
+                                                </strong>
+                                              </span>
+                                            ),
+                                          )}
+                                        </div>
                                       </div>
+                                      {renderableResult?.stateBefore &&
+                                        renderableResult.stateAfter && (
+                                          <StateTransition
+                                            before={
+                                              renderableResult.stateBefore
+                                            }
+                                            after={renderableResult.stateAfter}
+                                          />
+                                        )}
                                     </article>
                                   </li>
                                 )

@@ -9,6 +9,11 @@ export interface StateSummaryProps {
   readonly state?: readonly StateProbability[]
 }
 
+export interface StateTransitionProps {
+  readonly before: readonly StateProbability[]
+  readonly after: readonly StateProbability[]
+}
+
 const CONDITION_LABELS: Record<string, string> = {
   blinded: 'Blinded',
   poisoned: 'Poisoned',
@@ -42,6 +47,39 @@ function combatantSummary(label: string, state: SequenceState['player']) {
   return `${label}: ${labels.length > 0 ? labels.join(', ') : 'No active conditions'}`
 }
 
+function percentage(probability: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'percent',
+    maximumFractionDigits: 2,
+  }).format(probability)
+}
+
+function StateFlowStage({
+  label,
+  state,
+}: {
+  readonly label: string
+  readonly state: readonly StateProbability[]
+}) {
+  return (
+    <div className="state-flow-stage" aria-label={`${label} state`}>
+      <span className="state-flow-label">{label}</span>
+      <ol
+        className="state-flow-branches"
+        aria-label={`${label} state branches`}
+      >
+        {state.map((branch, index) => (
+          <li className="state-flow-branch" key={index}>
+            <strong>{percentage(branch.probability)}</strong>
+            <span>{combatantSummary('Player', branch.state.player)}</span>
+            <span>{combatantSummary('Enemy', branch.state.enemy)}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
 /**
  * A small render target for state snapshots once sequence results expose them.
  * It intentionally accepts an optional engine state instead of deriving one
@@ -55,13 +93,7 @@ export function StateSummary({ label, state }: StateSummaryProps) {
         <ol aria-label={`${label} state branches`}>
           {state.map((branch, index) => (
             <li key={index}>
-              <strong>
-                Probability:{' '}
-                {new Intl.NumberFormat('en-US', {
-                  style: 'percent',
-                  maximumFractionDigits: 2,
-                }).format(branch.probability)}
-              </strong>
+              <strong>Probability: {percentage(branch.probability)}</strong>
               <span>{combatantSummary('Player', branch.state.player)}</span>
               <span>{combatantSummary('Enemy', branch.state.enemy)}</span>
             </li>
@@ -73,5 +105,24 @@ export function StateSummary({ label, state }: StateSummaryProps) {
         </span>
       )}
     </div>
+  )
+}
+
+/** A compact, linked view of an event's state probabilities. */
+export function StateTransition({ before, after }: StateTransitionProps) {
+  return (
+    <section className="state-transition" aria-label="State transition">
+      <div className="state-transition-heading">
+        <strong>State transition</strong>
+        <span>Before and after this event</span>
+      </div>
+      <div className="state-flow">
+        <StateFlowStage label="Before" state={before} />
+        <span className="state-flow-arrow" aria-hidden="true">
+          →
+        </span>
+        <StateFlowStage label="After" state={after} />
+      </div>
+    </section>
   )
 }

@@ -34,6 +34,13 @@ describe('App', () => {
     expect(within(attack).getByLabelText(/die size/i)).toHaveValue('8')
     expect(within(attack).getByLabelText(/^modifier$/i)).toHaveValue(0)
     expect(within(attack).getByText('45%')).toBeInTheDocument()
+    const stateTransition = within(attack).getByLabelText('State transition')
+    expect(
+      within(stateTransition).getByLabelText('Before state'),
+    ).toBeInTheDocument()
+    expect(
+      within(stateTransition).getByLabelText('After state'),
+    ).toBeInTheDocument()
     const criticalChance = within(attack)
       .getByText('Critical chance')
       .closest('span')!
@@ -512,7 +519,11 @@ describe('App', () => {
 
     await addCondition(user, attacks[1], 'Vex')
     expect(within(aggregate).getByText('1.01')).toBeInTheDocument()
-    expect(within(attacks[1]).getAllByText('56.14%')).toHaveLength(2)
+    expect(
+      within(attacks[1]).getAllByText('56.14%', {
+        selector: '.event-result-metrics *',
+      }),
+    ).toHaveLength(2)
 
     await user.click(
       within(attacks[0]).getByRole('button', {
