@@ -13,6 +13,7 @@ import type {
   ConditionType,
   ExhaustionLevel,
   PersistentConditionType,
+  TurnBoundary,
 } from './conditions'
 
 export {
@@ -32,6 +33,8 @@ export type {
   ConditionDefinition,
   ConditionDuration,
   ConditionInstance,
+  OngoingDamageTrigger,
+  RepeatedSaveTrigger,
   ConditionType,
   ExhaustionLevel,
   PersistentConditionType,
@@ -353,12 +356,31 @@ export interface EventResult {
   readonly criticalProbability?: number
   readonly outcome: Outcome
   readonly conditionApplications: readonly ConditionApplication[]
+  readonly stateBefore?: readonly StateProbability[]
+  readonly stateAfter?: readonly StateProbability[]
+}
+
+export interface StateProbability {
+  readonly probability: number
+  readonly state: SequenceState
+}
+
+export type GeneratedBoundaryResultType =
+  'repeated-save' | 'ongoing-damage' | 'concentration-save'
+
+export interface GeneratedBoundaryResult {
+  readonly id: string
+  readonly owner: Combatant
+  readonly boundary: TurnBoundary
+  readonly type: GeneratedBoundaryResultType
+  readonly result: EventResult
 }
 
 export interface SequenceResult {
   readonly eventResults: Readonly<Record<string, EventResult>>
   readonly outcomes: readonly Outcome[]
   readonly expectedConditionApplications: readonly ExpectedConditionApplications[]
+  readonly generatedResults?: readonly GeneratedBoundaryResult[]
 }
 
 interface EventTransition {
@@ -369,6 +391,7 @@ interface EventTransition {
   readonly exactDamage: number
   readonly rollTotal?: number
   readonly appliedConditions: readonly ConditionType[]
+  readonly generatedResults?: readonly GeneratedBoundaryResult[]
 }
 
 interface DamagePoolOutcome {
@@ -473,6 +496,27 @@ function assertCombatant(value: Combatant, name: string) {
   }
 }
 
+function ongoingDamagePools(
+  trigger: NonNullable<ConditionInstance['duration']>['ongoingDamage'],
+): readonly DamagePoolConfig[] {
+  if (trigger === undefined) return []
+  if (trigger.damagePools !== undefined) {
+    return trigger.damagePools.map((pool) => ({
+      ...pool,
+      damageType: pool.damageType as DamageType,
+    }))
+  }
+  return [
+    {
+      id: 'ongoing-damage',
+      diceCount: trigger.diceCount!,
+      dieSides: trigger.dieSides!,
+      modifier: trigger.modifier!,
+      damageType: trigger.damageType as DamageType,
+    },
+  ]
+}
+
 function validateConditionDuration(duration: ConditionInstance['duration']) {
   if (duration === undefined) return
   assertInteger(duration.remainingTurns, 'Condition duration', 1)
@@ -483,6 +527,48 @@ function validateConditionDuration(duration: ConditionInstance['duration']) {
     throw new RangeError(
       'Condition duration turn owner must be player or enemy',
     )
+  }
+  if (duration.repeatedSave !== undefined) {
+    if (!ABILITIES.includes(duration.repeatedSave.ability as Ability)) {
+      throw new RangeError('Repeated save ability is invalid')
+    }
+    assertInteger(duration.repeatedSave.dc, 'Repeated save DC', 1)
+  }
+  if (duration.ongoingDamage !== undefined) {
+    if (duration.repeatedSave !== undefined) {
+      throw new RangeError('A condition duration may have only one trigger')
+    }
+    const pools = ongoingDamagePools(duration.ongoingDamage)
+    if (
+      pools.length === 0 ||
+      pools.some(
+        (pool) =>
+          pool.damageType === undefined ||
+          pool.diceCount === undefined ||
+          pool.dieSides === undefined ||
+          pool.modifier === undefined,
+      )
+    ) {
+      throw new RangeError('Ongoing damage must include at least one dice pool')
+    }
+    const ids = new Set<string>()
+    for (const [index, pool] of pools.entries()) {
+      const id = pool.id || `ongoing-${index}`
+      if (id.length === 0 || ids.has(id)) {
+        throw new RangeError(
+          'Ongoing damage pool IDs must be unique and non-empty',
+        )
+      }
+      ids.add(id)
+      assertInteger(pool.diceCount, 'Ongoing damage dice count', 1)
+      assertInteger(pool.dieSides, 'Ongoing damage die sides', 2)
+      assertInteger(pool.modifier, 'Ongoing damage modifier')
+      if (!DAMAGE_TYPES.includes(pool.damageType as DamageType)) {
+        throw new RangeError(
+          'Ongoing damage pool must have a valid damage type',
+        )
+      }
+    }
   }
 }
 
@@ -550,6 +636,9 @@ function validateCombatantState(
   }
   if (typeof state.heroicInspiration !== 'boolean') {
     throw new RangeError('Heroic Inspiration state must be boolean')
+  }
+  if (typeof state.helped !== 'boolean' || typeof state.dodging !== 'boolean') {
+    throw new RangeError('Helped and dodging state must be boolean')
   }
   assertInteger(state.exhaustion, 'Exhaustion level', 0)
   if (state.exhaustion > 6) {
@@ -631,13 +720,17 @@ function validateInspirationPolicy(
   if (policy.type !== 'damage-pool-threshold') {
     throw new RangeError('Invalid Heroic Inspiration policy')
   }
-  assertInteger(policy.threshold, 'Damage reroll threshold')
-  if (
-    !(config.damagePools ?? []).some((pool) => pool.id === policy.damagePoolId)
-  ) {
+  assertInteger(policy.threshold, 'Damage reroll threshold', 1)
+  const pool = (config.damagePools ?? []).find(
+    (candidate) => candidate.id === policy.damagePoolId,
+  )
+  if (pool === undefined) {
     throw new RangeError(
       'Heroic Inspiration damage pool must belong to the event',
     )
+  }
+  if (policy.threshold > pool.dieSides) {
+    throw new RangeError('Damage reroll threshold cannot exceed the die size')
   }
 }
 
@@ -811,18 +904,68 @@ function damageDistribution(
       }
       let damage = 0
       for (const [type, typedDamage] of byType) {
-        damage += applyDamageDefenses(
-          applyDamageConsequence(typedDamage, consequence),
-          type,
-          targetState,
-        )
+        damage += applyDamageDefenses(typedDamage, type, targetState)
       }
+      damage = applyDamageConsequence(damage, consequence)
       return {
         damage,
         inspirationSpent: pools.some((pool) => pool.inspirationSpent),
       }
     },
     (outcome) => `${outcome.damage}:${outcome.inspirationSpent}`,
+  )
+}
+
+interface ConcentrationCheckOutcome {
+  readonly state: SequenceState
+  readonly passed: boolean
+  readonly dc: number
+  readonly roll?: number
+}
+
+function concentrationAfterDamage(
+  state: SequenceState,
+  target: Combatant,
+  damage: number,
+): Distribution<ConcentrationCheckOutcome> {
+  const concentration = state[target].concentration
+  if (damage <= 0 || concentration === null) {
+    return Distribution.constant(
+      { state, passed: true, dc: 0 },
+      (outcome) => `${stateKey(outcome.state)}:no-check`,
+    )
+  }
+  if (hasEffectiveCondition(state[target].conditions, 'incapacitated')) {
+    return Distribution.constant(
+      {
+        state: {
+          ...state,
+          [target]: { ...state[target], concentration: null },
+        },
+        passed: false,
+        dc: Math.min(30, Math.max(10, Math.floor(damage / 2))),
+      },
+      (outcome) => `${stateKey(outcome.state)}:incapacitated`,
+    )
+  }
+  const dc = Math.min(30, Math.max(10, Math.floor(damage / 2)))
+  const penalty = state[target].exhaustion * 2
+  return Distribution.die(20).map(
+    (roll) => {
+      const passed = roll + concentration.constitutionModifier - penalty >= dc
+      return {
+        state: passed
+          ? state
+          : {
+              ...state,
+              [target]: { ...state[target], concentration: null },
+            },
+        passed,
+        dc,
+        roll,
+      }
+    },
+    (outcome) => `${stateKey(outcome.state)}:${outcome.roll ?? ''}`,
   )
 }
 
@@ -990,15 +1133,18 @@ export function applyConditionConfigs(
     appliedConditions.add(condition.type)
   })
 
+  const updatedCombatant = {
+    ...state[target],
+    vex,
+    sap,
+    conditions: instances,
+  }
   return {
     state: {
       ...state,
-      [target]: {
-        ...state[target],
-        vex,
-        sap,
-        conditions: instances,
-      },
+      [target]: hasEffectiveCondition(instances, 'incapacitated')
+        ? { ...updatedCombatant, concentration: null }
+        : updatedCombatant,
     },
     appliedConditions: [...appliedConditions],
   }
@@ -1096,6 +1242,25 @@ export function canExecuteActivity(
   )
 }
 
+const SPEED_ZERO_CONDITIONS: readonly PersistentConditionType[] = [
+  'grappled',
+  'restrained',
+  'stunned',
+  'paralyzed',
+  'petrified',
+  'unconscious',
+]
+
+export function isDodgeActive(state: SequenceState, owner: Combatant) {
+  return (
+    state[owner].dodging &&
+    !hasEffectiveCondition(state[owner].conditions, 'incapacitated') &&
+    !SPEED_ZERO_CONDITIONS.some((condition) =>
+      hasEffectiveCondition(state[owner].conditions, condition),
+    )
+  )
+}
+
 export function activityExecutionProbability(
   state: SequenceState,
   owner: Combatant,
@@ -1122,7 +1287,7 @@ function stateKey(state: SequenceState) {
         value.conditions
           .map(
             (condition) =>
-              `${condition.id},${condition.type},${condition.source},${condition.recipient},${condition.duration?.remainingTurns ?? ''},${condition.duration?.boundary ?? ''},${condition.duration?.turnOwner ?? ''}`,
+              `${condition.id},${condition.type},${condition.source},${condition.recipient},${condition.duration?.remainingTurns ?? ''},${condition.duration?.boundary ?? ''},${condition.duration?.turnOwner ?? ''},${JSON.stringify(condition.duration?.repeatedSave ?? '')},${JSON.stringify(condition.duration?.ongoingDamage ?? '')}`,
           )
           .sort()
           .join(';'),
@@ -1195,10 +1360,7 @@ function attackTransitions(
     ],
     [
       ...(state[attacker].sap ? ['sap'] : []),
-      ...(state[target].dodging &&
-      !hasEffectiveCondition(state[target].conditions, 'incapacitated')
-        ? ['dodge']
-        : []),
+      ...(isDodgeActive(state, target) ? ['dodge'] : []),
       ...attackerEffects.disadvantage,
       ...targetEffects.disadvantage,
     ],
@@ -1251,23 +1413,31 @@ function attackTransitions(
       )
       return damageDistribution(
         config,
-        state[target],
+        application.state[target],
         'full',
         critical ? 2 : 1,
         stateAfterD20[attacker].heroicInspiration,
-      ).map(
-        (damage) => ({
-          state: spendInspiration(
-            application.state,
-            attacker,
-            damage.inspirationSpent,
+      ).flatMap(
+        (damage) =>
+          concentrationAfterDamage(
+            spendInspiration(
+              application.state,
+              attacker,
+              damage.inspirationSpent,
+            ),
+            target,
+            damage.damage,
+          ).map(
+            (concentration) => ({
+              state: concentration.state,
+              executed: true,
+              success: true,
+              critical,
+              exactDamage: damage.damage,
+              appliedConditions: application.appliedConditions,
+            }),
+            transitionKey,
           ),
-          executed: true,
-          success: true,
-          critical,
-          exactDamage: damage.damage,
-          appliedConditions: application.appliedConditions,
-        }),
         transitionKey,
       )
     }, transitionKey)
@@ -1323,9 +1493,7 @@ function savingThrowTransitions(
   const exhaustionPenalty = state[target].exhaustion * 2
   const saveMode = effectiveRollMode(
     mode,
-    config.saveAbility === 'dexterity' &&
-      state[target].dodging &&
-      !hasEffectiveCondition(state[target].conditions, 'incapacitated')
+    config.saveAbility === 'dexterity' && isDodgeActive(state, target)
       ? ['dodge']
       : [],
     [],
@@ -1361,23 +1529,31 @@ function savingThrowTransitions(
       )
       return damageDistribution(
         config,
-        state[target],
+        application.state[target],
         consequence,
         1,
         stateAfterD20[source].heroicInspiration,
-      ).map(
-        (damage) => ({
-          state: spendInspiration(
-            application.state,
-            source,
-            damage.inspirationSpent,
+      ).flatMap(
+        (damage) =>
+          concentrationAfterDamage(
+            spendInspiration(
+              application.state,
+              source,
+              damage.inspirationSpent,
+            ),
+            target,
+            damage.damage,
+          ).map(
+            (concentration) => ({
+              state: concentration.state,
+              executed: true,
+              success,
+              critical: false,
+              exactDamage: damage.damage,
+              appliedConditions: application.appliedConditions,
+            }),
+            transitionKey,
           ),
-          executed: true,
-          success,
-          critical: false,
-          exactDamage: damage.damage,
-          appliedConditions: application.appliedConditions,
-        }),
         transitionKey,
       )
     }, transitionKey)
@@ -1392,6 +1568,13 @@ function abilityCheckTransitions(
   assertInteger(config.modifier, 'Ability check modifier')
   if (!ABILITIES.includes(config.ability)) {
     throw new RangeError('Ability check ability is invalid')
+  }
+  if (
+    config.type === 'grappled-escape' &&
+    config.ability !== 'strength' &&
+    config.ability !== 'dexterity'
+  ) {
+    throw new RangeError('Grappled escape must use Strength or Dexterity')
   }
   if (!ATTACK_ROLL_MODES.includes(config.rollMode)) {
     throw new RangeError('Ability check roll mode is invalid')
@@ -1409,6 +1592,22 @@ function abilityCheckTransitions(
         : 'enemy'
   assertCombatant(actor, 'Ability check owner')
   const target: Combatant = actor
+  if (
+    config.type === 'grappled-escape' &&
+    !hasEffectiveCondition(state[actor].conditions, 'grappled')
+  ) {
+    return Distribution.constant(
+      {
+        state,
+        executed: true,
+        success: false,
+        critical: false,
+        exactDamage: 0,
+        appliedConditions: [],
+      },
+      transitionKey,
+    )
+  }
   const hasDisadvantage =
     hasEffectiveCondition(state[actor].conditions, 'poisoned') ||
     hasEffectiveCondition(state[actor].conditions, 'frightened')
@@ -1493,7 +1692,9 @@ function initiativeTransitions(
     hasEffectiveCondition(state[actor].conditions, 'invisible')
       ? ['invisible']
       : [],
-    [],
+    hasEffectiveCondition(state[actor].conditions, 'incapacitated')
+      ? ['incapacitated']
+      : [],
   )
   return d20Rolls(mode).map(
     (values) => ({
@@ -1530,15 +1731,23 @@ function standaloneDamageTransitions(
     'full',
     1,
     state[source].heroicInspiration,
-  ).map(
-    (damage) => ({
-      state: spendInspiration(state, source, damage.inspirationSpent),
-      executed: true,
-      success: true,
-      critical: false,
-      exactDamage: damage.damage,
-      appliedConditions: [],
-    }),
+  ).flatMap(
+    (damage) =>
+      concentrationAfterDamage(
+        spendInspiration(state, source, damage.inspirationSpent),
+        target,
+        damage.damage,
+      ).map(
+        (concentration) => ({
+          state: concentration.state,
+          executed: true,
+          success: true,
+          critical: false,
+          exactDamage: damage.damage,
+          appliedConditions: [],
+        }),
+        transitionKey,
+      ),
     transitionKey,
   )
 }
@@ -1718,14 +1927,41 @@ function eventTarget(config: EventConfig): ConditionTarget | undefined {
     case 'player-saving-throw':
     case 'player-damage':
       return 'players'
+    case 'apply-condition':
+    case 'apply-effect':
+      return config.target === 'player' ? 'players' : 'enemies'
     default:
       return undefined
   }
 }
 
+function stateSummary(
+  distribution: Distribution<SequenceState>,
+): readonly StateProbability[] {
+  return distribution.outcomes.map(({ value, probability }) => ({
+    state: value,
+    probability: normalizeCalculation(probability),
+  }))
+}
+
+function producesDamage(config: EventConfig) {
+  return (
+    config.type === 'player-attack' ||
+    config.type === 'enemy-attack' ||
+    config.type === 'player-saving-throw' ||
+    config.type === 'enemy-saving-throw' ||
+    config.type === 'player-damage' ||
+    config.type === 'enemy-damage'
+  )
+}
+
 function resultFromTransitions(
   config: EventConfig,
   transitions: Distribution<EventTransition>,
+  before: Distribution<SequenceState> = Distribution.constant(
+    INITIAL_SEQUENCE_STATE,
+    stateKey,
+  ),
 ): EventResult {
   const target = eventTarget(config)
   if (
@@ -1744,10 +1980,14 @@ function resultFromTransitions(
         ),
       },
       conditionApplications: [],
+      stateBefore: stateSummary(before),
+      stateAfter: stateSummary(
+        transitions.map((transition) => transition.state, stateKey),
+      ),
     }
   }
   const outcome =
-    target === undefined
+    target === undefined || !producesDamage(config)
       ? noDamageOutcome()
       : damageOutcome(
           target,
@@ -1776,7 +2016,335 @@ function resultFromTransitions(
         ),
       ),
     })),
+    stateBefore: stateSummary(before),
+    stateAfter: stateSummary(
+      transitions.map((transition) => transition.state, stateKey),
+    ),
   }
+}
+
+interface BoundaryTransition {
+  readonly state: SequenceState
+  readonly generatedResults: readonly GeneratedBoundaryResult[]
+}
+
+interface WeightedGeneratedResult {
+  readonly generated: GeneratedBoundaryResult
+  readonly probability: number
+}
+
+function aggregateGeneratedResults(
+  weighted: readonly WeightedGeneratedResult[],
+): readonly GeneratedBoundaryResult[] {
+  const groups = new Map<string, WeightedGeneratedResult[]>()
+  for (const item of weighted) {
+    const group = groups.get(item.generated.id) ?? []
+    group.push(item)
+    groups.set(item.generated.id, group)
+  }
+  return [...groups.values()].map((group) => {
+    const first = group[0].generated
+    const outcomes = group.map(({ generated, probability }) => ({
+      generated,
+      probability,
+    }))
+    const eventResults = outcomes.map(({ generated }) => generated.result)
+    const expectedDamage = eventResults.reduce((sum, result, index) => {
+      const outcome = result.outcome
+      const damage =
+        outcome.type === 'expected-damage-against-enemies' ||
+        outcome.type === 'expected-damage-against-players'
+          ? outcome.expectedDamage
+          : 0
+      return sum + damage * outcomes[index].probability
+    }, 0)
+    const outcome =
+      first.result.outcome.type === 'expected-damage-against-enemies'
+        ? damageOutcome('enemies', expectedDamage)
+        : first.result.outcome.type === 'expected-damage-against-players'
+          ? damageOutcome('players', expectedDamage)
+          : first.result.outcome
+    const mergeStates = (which: 'stateBefore' | 'stateAfter') => {
+      const merged = new Map<string, StateProbability>()
+      for (const { generated, probability } of outcomes) {
+        for (const state of generated.result[which] ?? []) {
+          const key = stateKey(state.state)
+          const existing = merged.get(key)
+          merged.set(key, {
+            state: state.state,
+            probability:
+              (existing?.probability ?? 0) + probability * state.probability,
+          })
+        }
+      }
+      return [...merged.values()].map((state) => ({
+        ...state,
+        probability: normalizeCalculation(state.probability),
+      }))
+    }
+    return {
+      ...first,
+      result: {
+        executionProbability: normalizeCalculation(
+          outcomes.reduce(
+            (sum, item) =>
+              sum +
+              item.probability * item.generated.result.executionProbability,
+            0,
+          ),
+        ),
+        successProbability: normalizeCalculation(
+          outcomes.reduce(
+            (sum, item) =>
+              sum + item.probability * item.generated.result.successProbability,
+            0,
+          ),
+        ),
+        outcome,
+        conditionApplications: [],
+        stateBefore: mergeStates('stateBefore'),
+        stateAfter: mergeStates('stateAfter'),
+      },
+    }
+  })
+}
+
+function boundaryResult(
+  id: string,
+  owner: Combatant,
+  boundary: TurnBoundary,
+  type: GeneratedBoundaryResultType,
+  before: SequenceState,
+  after: SequenceState,
+  successProbability: number,
+  outcome: Outcome = noDamageOutcome(),
+): GeneratedBoundaryResult {
+  return {
+    id,
+    owner,
+    boundary,
+    type,
+    result: {
+      executionProbability: 1,
+      successProbability: normalizeCalculation(successProbability),
+      outcome,
+      conditionApplications: [],
+      stateBefore: [{ probability: 1, state: before }],
+      stateAfter: [{ probability: 1, state: after }],
+    },
+  }
+}
+
+function decrementCondition(
+  state: SequenceState,
+  target: Combatant,
+  id: string,
+): SequenceState {
+  const conditions = state[target].conditions.flatMap((condition) => {
+    if (condition.id !== id || condition.duration === undefined) {
+      return [condition]
+    }
+    const remainingTurns = condition.duration.remainingTurns - 1
+    return remainingTurns <= 0
+      ? []
+      : [{ ...condition, duration: { ...condition.duration, remainingTurns } }]
+  })
+  return { ...state, [target]: { ...state[target], conditions } }
+}
+
+function removeConditionInstance(
+  state: SequenceState,
+  target: Combatant,
+  id: string,
+) {
+  return {
+    ...state,
+    [target]: {
+      ...state[target],
+      conditions: state[target].conditions.filter(
+        (condition) => condition.id !== id,
+      ),
+    },
+  }
+}
+
+function boundaryConditionTransitions(
+  state: SequenceState,
+  target: Combatant,
+  condition: ConditionInstance,
+  turn: TurnConfig,
+  boundary: TurnBoundary,
+): Distribution<BoundaryTransition> {
+  const duration = condition.duration
+  if (
+    duration === undefined ||
+    duration.turnOwner !== turn.owner ||
+    duration.boundary !== boundary
+  ) {
+    return Distribution.constant(
+      { state, generatedResults: [] },
+      (value) => `${stateKey(value.state)}:none`,
+    )
+  }
+  const triggerId = `boundary:${turn.id}:${boundary}:${condition.id}`
+  if (duration.repeatedSave !== undefined) {
+    const ability = duration.repeatedSave.ability as Ability
+    const effects = conditionRollEffects(
+      state[target].conditions,
+      'saving-throw',
+      ability,
+    )
+    const mode = effectiveRollMode(
+      'normal',
+      effects.advantage,
+      effects.disadvantage,
+    )
+    return d20Rolls(mode).flatMap(
+      (values) => {
+        const roll = selectedD20(values, mode)
+        const success =
+          !effects.automaticFailure &&
+          roll - state[target].exhaustion * 2 >= duration.repeatedSave!.dc
+        const afterDuration = success
+          ? removeConditionInstance(state, target, condition.id)
+          : decrementCondition(state, target, condition.id)
+        const result = boundaryResult(
+          triggerId,
+          target,
+          boundary,
+          'repeated-save',
+          state,
+          afterDuration,
+          success ? 1 : 0,
+        )
+        return Distribution.constant(
+          { state: afterDuration, generatedResults: [result] },
+          (value) =>
+            `${stateKey(value.state)}:${value.generatedResults[0]?.id}:${roll}`,
+        )
+      },
+      (value) => `${stateKey(value.state)}:${value.generatedResults[0]?.id}`,
+    )
+  }
+  if (duration.ongoingDamage !== undefined) {
+    const damageConfig: DamageEventConfig = {
+      id: triggerId,
+      damagePools: ongoingDamagePools(duration.ongoingDamage),
+    }
+    return damageDistribution(
+      damageConfig,
+      state[target],
+      'full',
+      1,
+      false,
+    ).flatMap(
+      (damage) => {
+        const beforeDamage = decrementCondition(state, target, condition.id)
+        return concentrationAfterDamage(
+          beforeDamage,
+          target,
+          damage.damage,
+        ).map(
+          (concentration) => ({
+            state: concentration.state,
+            generatedResults: [
+              boundaryResult(
+                triggerId,
+                target,
+                boundary,
+                'ongoing-damage',
+                state,
+                concentration.state,
+                1,
+                damageOutcome(
+                  target === 'player' ? 'players' : 'enemies',
+                  damage.damage,
+                ),
+              ),
+            ],
+          }),
+          (value) => `${stateKey(value.state)}:${triggerId}:${damage.damage}`,
+        )
+      },
+      (value) => `${stateKey(value.state)}:${value.generatedResults[0]?.id}`,
+    )
+  }
+  const next = decrementCondition(state, target, condition.id)
+  return Distribution.constant({ state: next, generatedResults: [] }, (value) =>
+    stateKey(value.state),
+  )
+}
+
+function boundaryTransitions(
+  state: SequenceState,
+  turn: TurnConfig,
+  boundary: TurnBoundary,
+  processed = new Set<string>(),
+): Distribution<BoundaryTransition> {
+  let initial = state
+  if (boundary === 'start') {
+    initial = {
+      ...initial,
+      [turn.owner]: {
+        ...initial[turn.owner],
+        helped: false,
+        dodging: false,
+      },
+    }
+  }
+  for (const combatant of ['player', 'enemy'] as const) {
+    if (
+      hasEffectiveCondition(initial[combatant].conditions, 'incapacitated') &&
+      initial[combatant].concentration !== null
+    ) {
+      initial = {
+        ...initial,
+        [combatant]: { ...initial[combatant], concentration: null },
+      }
+    }
+  }
+  for (const target of ['player', 'enemy'] as const) {
+    for (const condition of initial[target].conditions) {
+      const duration = condition.duration
+      if (
+        !processed.has(condition.id) &&
+        duration?.turnOwner === turn.owner &&
+        duration.boundary === boundary
+      ) {
+        return boundaryConditionTransitions(
+          initial,
+          target,
+          condition,
+          turn,
+          boundary,
+        ).flatMap(
+          (result) =>
+            boundaryTransitions(
+              result.state,
+              turn,
+              boundary,
+              new Set([...processed, condition.id]),
+            ).map(
+              (nested) => ({
+                state: nested.state,
+                generatedResults: [
+                  ...result.generatedResults,
+                  ...nested.generatedResults,
+                ],
+              }),
+              (value) =>
+                `${stateKey(value.state)}:${value.generatedResults.map((event) => event.id).join(',')}`,
+            ),
+          (value) =>
+            `${stateKey(value.state)}:${value.generatedResults.map((event) => event.id).join(',')}`,
+        )
+      }
+    }
+  }
+  return Distribution.constant(
+    { state: initial, generatedResults: [] },
+    (value) => stateKey(value.state),
+  )
 }
 
 function calculateSingleEvent(config: EventConfig) {
@@ -1889,13 +2457,53 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
   const eventResults: Record<string, EventResult> = {}
   const totals = new Map<Outcome['type'], number>()
   const conditionTotals = new Map<string, ExpectedConditionApplications>()
+  const weightedGeneratedResults: WeightedGeneratedResult[] = []
+
+  const collectBoundary = (
+    boundaryDistribution: Distribution<BoundaryTransition>,
+  ) => {
+    for (const outcome of boundaryDistribution.outcomes) {
+      weightedGeneratedResults.push(
+        ...outcome.value.generatedResults.map((generated) => ({
+          generated,
+          probability: outcome.probability,
+        })),
+      )
+    }
+    return boundaryDistribution.map((transition) => transition.state, stateKey)
+  }
+
+  const suppressibleEvent = (event: EventConfig) => {
+    switch (event.type) {
+      case 'player-attack':
+      case 'enemy-attack':
+      case 'player-saving-throw':
+      case 'enemy-saving-throw':
+      case 'player-ability-check':
+      case 'enemy-ability-check':
+      case 'grappled-escape':
+      case 'player-damage':
+      case 'enemy-damage':
+        return true
+      default:
+        return false
+    }
+  }
 
   for (const round of config.rounds) {
     for (const turn of round.turns) {
+      states = collectBoundary(
+        states.flatMap(
+          (state) => boundaryTransitions(state, turn, 'start'),
+          (value) =>
+            `${stateKey(value.state)}:${value.generatedResults.map((event) => event.id).join(',')}`,
+        ),
+      )
       for (const activity of turn.activities) {
         for (const event of activity.events) {
           const transitions = states.flatMap(
             (state) =>
+              !suppressibleEvent(event) ||
               canExecuteActivity(state, activity.owner)
                 ? eventTransitions(event, state)
                 : Distribution.constant(
@@ -1911,7 +2519,7 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
                   ),
             transitionKey,
           )
-          const result = resultFromTransitions(event, transitions)
+          const result = resultFromTransitions(event, transitions, states)
           eventResults[event.id] = result
           if (
             result.outcome.type === 'expected-damage-against-enemies' ||
@@ -1938,6 +2546,13 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
           states = transitions.map((transition) => transition.state, stateKey)
         }
       }
+      states = collectBoundary(
+        states.flatMap(
+          (state) => boundaryTransitions(state, turn, 'end'),
+          (value) =>
+            `${stateKey(value.state)}:${value.generatedResults.map((event) => event.id).join(',')}`,
+        ),
+      )
     }
   }
 
@@ -1960,5 +2575,10 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
         expectedApplications: normalizeCalculation(total.expectedApplications),
       }),
     ),
+    ...(weightedGeneratedResults.length > 0
+      ? {
+          generatedResults: aggregateGeneratedResults(weightedGeneratedResults),
+        }
+      : {}),
   }
 }
