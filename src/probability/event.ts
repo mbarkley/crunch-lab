@@ -1282,6 +1282,33 @@ export function activityExecutionProbability(
   return canExecuteActivity(state, owner) ? 1 : 0
 }
 
+/** Events that consume an action or bonus action are suppressed by incapacitation. */
+export function eventUsesActivityResource(config: EventConfig): boolean {
+  switch (config.type) {
+    case 'player-attack':
+    case 'enemy-attack':
+    case 'player-ability-check':
+    case 'enemy-ability-check':
+    case 'grappled-escape':
+    case 'help':
+    case 'dodge':
+    case 'apply-condition':
+    case 'apply-effect':
+    case 'start-concentration':
+      return true
+    case 'player-saving-throw':
+    case 'enemy-saving-throw':
+    case 'player-initiative':
+    case 'enemy-initiative':
+    case 'player-damage':
+    case 'enemy-damage':
+    case 'remove-condition':
+    case 'remove-effect':
+    case 'stop-concentration':
+      return false
+  }
+}
+
 function stateKey(state: SequenceState) {
   return (['player', 'enemy'] as const)
     .map((combatant) => {
@@ -2507,23 +2534,6 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
     return boundaryDistribution.map((transition) => transition.state, stateKey)
   }
 
-  const suppressibleEvent = (event: EventConfig) => {
-    switch (event.type) {
-      case 'player-attack':
-      case 'enemy-attack':
-      case 'player-saving-throw':
-      case 'enemy-saving-throw':
-      case 'player-ability-check':
-      case 'enemy-ability-check':
-      case 'grappled-escape':
-      case 'player-damage':
-      case 'enemy-damage':
-        return true
-      default:
-        return false
-    }
-  }
-
   for (const round of config.rounds) {
     for (const turn of round.turns) {
       states = collectBoundary(
@@ -2537,7 +2547,7 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
         for (const event of activity.events) {
           const transitions = states.flatMap(
             (state) =>
-              !suppressibleEvent(event) ||
+              !eventUsesActivityResource(event) ||
               canExecuteActivity(state, activity.owner)
                 ? eventTransitions(event, state)
                 : Distribution.constant(
