@@ -32,11 +32,11 @@ Attacks can add Vex or Sap to their target on a hit. Saving throws can add eithe
 
 Every event produces a typed outcome. The summary groups expected damage against enemies separately from expected damage against players, reports each event's condition application chance, and shows the expected number of times each configured condition is applied to players and enemies across the sequence.
 
-Initial Player State and Enemy State panels expose all persistent conditions, Vex, Sap, exhaustion levels 0–6, condition immunities, typed damage defenses, Help, Dodge, Heroic Inspiration, and Concentration modifiers. The searchable condition picker uses compact chips and a scrollable, fuzzy-matched option list. When result snapshots become available, the timeline has a dedicated state summary target for state-before, state-after, and boundary results.
+Initial Player State and Enemy State panels expose all persistent conditions, Vex, Sap, exhaustion levels 0–6, condition immunities, typed damage defenses, Help, Dodge, Heroic Inspiration, and Concentration modifiers. Each initial condition can also specify its source, duration, counted turn, expiry boundary, and one repeated save or ongoing-damage trigger. The searchable condition picker uses compact chips and a scrollable, fuzzy-matched option list. When result snapshots become available, the timeline has a dedicated state summary target for state-before, state-after, and boundary results.
 
 ## Deferred
 
-Named targets and multiple combatants, turn-based condition expiration, persistent durations and boundary triggers, repeated saves and ongoing damage, import/export, full probability charts, accounts, and a backend remain deferred. Total Cover, spatial targeting, hit points, and shared damage rolls across multiple targets remain outside the current model. Action-resource scheduling remains flexible: events may be placed in either Action or Bonus Action activities without enforcing game-specific action restrictions.
+Named targets and multiple combatants, import/export, full probability charts, accounts, and a backend remain deferred. Total Cover, spatial targeting, hit points, and shared damage rolls across multiple targets remain outside the current model. Action-resource scheduling remains flexible: events may be placed in either Action or Bonus Action activities without enforcing game-specific action restrictions.
 
 ## Development
 
