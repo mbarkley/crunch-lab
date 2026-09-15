@@ -28,10 +28,33 @@ export type ConditionType = ConditionCatalogType | TransientEffectType
 export type ExhaustionLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6
 export type TurnBoundary = 'start' | 'end'
 
+/** A save made by a persistent condition at one of its duration boundaries. */
+export interface RepeatedSaveTrigger {
+  readonly ability: string
+  readonly dc: number
+}
+
+/** Typed damage dealt by a persistent condition at one of its duration boundaries. */
+export interface OngoingDamageTrigger {
+  readonly damagePools?: readonly {
+    readonly id: string
+    readonly diceCount: number
+    readonly dieSides: number
+    readonly modifier: number
+    readonly damageType: string
+  }[]
+  readonly damageType?: string
+  readonly diceCount?: number
+  readonly dieSides?: number
+  readonly modifier?: number
+}
+
 export interface ConditionDuration {
   readonly remainingTurns: number
   readonly boundary: TurnBoundary
   readonly turnOwner: Combatant
+  readonly repeatedSave?: RepeatedSaveTrigger
+  readonly ongoingDamage?: OngoingDamageTrigger
 }
 
 export interface ConditionInstance {
