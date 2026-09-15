@@ -24,17 +24,19 @@ The functional editor models combat as nested rounds, player or enemy turns, Act
 
 Events can be duplicated, deleted, and reordered within their activity with drag and drop or the move controls. Every event type can be placed in either activity type, and contextual controls add rounds, turns, activities, and events.
 
+The event picker exposes ability checks, Initiative, standalone typed damage, condition and effect application or removal, Help, Dodge, Grappled escape, and Concentration start/stop alongside attacks and saving throws. Each event family has editable, accessible controls and reports its execution chance. Initiative reports an expected total; state-only events report a no-damage outcome. The editor assumes attacks and saves can always target correctly, with mutual visibility, frightened line of sight, and the standard within-5-feet Prone, Paralyzed, and Unconscious relationships represented by the rules engine rather than spatial controls.
+
 Player and enemy saving throws configure a save DC, save ability, roll mode (including voluntary automatic failure), Cover, one or more typed damage dice pools, and the damage taken on failure or success. A consequence can apply full damage, half the combined damage rounded down, or no damage. Initial combatant state can provide typed damage Immunity, Resistance, Vulnerability, and Heroic Inspiration; defenses are applied to each exact damage outcome in rules order.
 
 Attacks can add Vex or Sap to their target on a hit. Saving throws can add either condition to their target on failure, success, or both. Vex grants advantage to the next attack against its target, while Sap gives disadvantage to the next attack made by its target. Applicable conditions are consumed by that attack, and opposing advantage and disadvantage cancel.
 
 Every event produces a typed outcome. The summary groups expected damage against enemies separately from expected damage against players, reports each event's condition application chance, and shows the expected number of times each configured condition is applied to players and enemies across the sequence.
 
-The event domain also accepts pure ability checks, Initiative rolls, standalone typed damage, condition/effect application and removal, Help, Dodge, Grappled escape, and Concentration start/stop events. Initiative results report expected totals; state-only events report no damage. Help and Dodge state is available to later attacks and saves, while timing, expiration, and action-resource scheduling remain a later sequence layer.
+Initial Player State and Enemy State panels expose all persistent conditions, Vex, Sap, exhaustion levels 0–6, condition immunities, typed damage defenses, Help, Dodge, Heroic Inspiration, and Concentration modifiers. The searchable condition picker uses compact chips and a scrollable, fuzzy-matched option list. When result snapshots become available, the timeline has a dedicated state summary target for state-before, state-after, and boundary results.
 
 ## Deferred
 
-Named targets and multiple combatants, turn-based condition expiration, persistence, import/export, full probability charts, accounts, and a backend remain deferred. Total Cover, spatial targeting, hit points, and shared damage rolls across multiple targets remain outside the current model.
+Named targets and multiple combatants, turn-based condition expiration, persistent durations and boundary triggers, repeated saves and ongoing damage, import/export, full probability charts, accounts, and a backend remain deferred. Total Cover, spatial targeting, hit points, and shared damage rolls across multiple targets remain outside the current model. Action-resource scheduling remains flexible: events may be placed in either Action or Bonus Action activities without enforcing game-specific action restrictions.
 
 ## Development
 

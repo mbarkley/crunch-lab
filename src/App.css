@@ -721,6 +721,27 @@ input[aria-invalid='true'] {
   color: #302a42;
 }
 
+.event-body {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.state-event-fields {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  align-items: end;
+  gap: 14px 16px;
+  padding: 22px 20px;
+}
+
+.state-event-fields legend {
+  grid-column: 1 / -1;
+}
+
+.state-event-fields .condition-picker {
+  grid-column: 1 / -1;
+}
+
 @media (max-width: 760px) {
   .state-panels {
     grid-template-columns: 1fr;
@@ -739,6 +760,11 @@ input[aria-invalid='true'] {
 
   .state-panel-note {
     display: none;
+  }
+
+  .state-event-fields {
+    grid-template-columns: 1fr;
+    padding: 18px 14px;
   }
 }
 

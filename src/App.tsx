@@ -15,6 +15,7 @@ import {
   ConditionPicker,
   type ConditionPickerOption,
 } from './components/ConditionPicker'
+import { StateSummary } from './components/StateSummary'
 import type {
   Ability,
   ActivityType,
@@ -22,6 +23,7 @@ import type {
   Combatant,
   ConditionConfig,
   ConditionInstance,
+  ConditionRemovalConfig,
   ConditionTarget,
   ConditionType,
   Cover,
@@ -139,7 +141,7 @@ interface StateDraft {
 }
 
 type EventType = EventDraft['type']
-type OutcomeType = Outcome['type']
+type OutcomeType = Outcome['type'] | undefined
 
 interface DamagePoolDraft {
   readonly id: string
@@ -161,8 +163,12 @@ interface InspirationDraft {
   readonly heroicInspirationThreshold: string
 }
 
-interface AttackDraft extends DamageDraft, InspirationDraft {
+interface BaseEventDraft extends DamageDraft, InspirationDraft {
   readonly id: string
+  readonly type: EventType
+}
+
+interface AttackDraft extends BaseEventDraft {
   readonly type: 'player-attack' | 'enemy-attack'
   readonly armorClass: string
   readonly attackModifier: string
@@ -171,7 +177,7 @@ interface AttackDraft extends DamageDraft, InspirationDraft {
   readonly hitConditions: readonly ConditionConfig[]
 }
 
-interface SavingThrowDraft extends DamageDraft, InspirationDraft {
+interface SavingThrowDraft extends BaseEventDraft {
   readonly id: string
   readonly type: 'player-saving-throw' | 'enemy-saving-throw'
   readonly saveDc: string
@@ -185,7 +191,109 @@ interface SavingThrowDraft extends DamageDraft, InspirationDraft {
   readonly successConditions: readonly ConditionConfig[]
 }
 
-type EventDraft = AttackDraft | SavingThrowDraft
+interface AbilityCheckDraft extends BaseEventDraft {
+  readonly type: 'player-ability-check' | 'enemy-ability-check'
+  readonly ability: Ability
+  readonly dc: string
+  readonly modifier: string
+  readonly rollMode: AttackRollMode
+  readonly sightDependent: boolean
+  readonly successConditions: readonly ConditionConfig[]
+  readonly failureConditions: readonly ConditionConfig[]
+  readonly successRemovals: readonly ConditionRemovalConfig[]
+  readonly failureRemovals: readonly ConditionRemovalConfig[]
+}
+
+interface InitiativeDraft extends BaseEventDraft {
+  readonly type: 'player-initiative' | 'enemy-initiative'
+  readonly ability: Ability
+  readonly modifier: string
+  readonly rollMode: AttackRollMode
+}
+
+interface StandaloneDamageDraft extends BaseEventDraft {
+  readonly type: 'player-damage' | 'enemy-damage'
+  readonly target: Combatant
+}
+
+interface ApplyConditionDraft extends BaseEventDraft {
+  readonly type: 'apply-condition'
+  readonly source: Combatant
+  readonly target: Combatant
+  readonly conditions: readonly ConditionConfig[]
+}
+
+interface ApplyEffectDraft extends BaseEventDraft {
+  readonly type: 'apply-effect'
+  readonly source: Combatant
+  readonly target: Combatant
+  readonly effects: readonly ConditionConfig[]
+}
+
+interface RemoveConditionDraft extends BaseEventDraft {
+  readonly type: 'remove-condition'
+  readonly target: Combatant
+  readonly conditions: readonly ConditionRemovalConfig[]
+}
+
+interface RemoveEffectDraft extends BaseEventDraft {
+  readonly type: 'remove-effect'
+  readonly target: Combatant
+  readonly effects: readonly ConditionRemovalConfig[]
+}
+
+interface HelpDraft extends BaseEventDraft {
+  readonly type: 'help'
+  readonly owner: Combatant
+  readonly target: Combatant
+}
+
+interface DodgeDraft extends BaseEventDraft {
+  readonly type: 'dodge'
+  readonly owner: Combatant
+}
+
+interface GrappledEscapeDraft extends BaseEventDraft {
+  readonly type: 'grappled-escape'
+  readonly owner: Combatant
+  readonly ability: Ability
+  readonly dc: string
+  readonly modifier: string
+  readonly rollMode: AttackRollMode
+  readonly sightDependent: boolean
+  readonly grappledConditionId: string
+  readonly successConditions: readonly ConditionConfig[]
+  readonly failureConditions: readonly ConditionConfig[]
+  readonly successRemovals: readonly ConditionRemovalConfig[]
+  readonly failureRemovals: readonly ConditionRemovalConfig[]
+}
+
+interface StartConcentrationDraft extends BaseEventDraft {
+  readonly type: 'start-concentration'
+  readonly owner: Combatant
+  readonly constitutionModifier: string
+}
+
+interface StopConcentrationDraft extends BaseEventDraft {
+  readonly type: 'stop-concentration'
+  readonly owner: Combatant
+}
+
+type EventDraft =
+  | AttackDraft
+  | SavingThrowDraft
+  | AbilityCheckDraft
+  | InitiativeDraft
+  | StandaloneDamageDraft
+  | ApplyConditionDraft
+  | ApplyEffectDraft
+  | RemoveConditionDraft
+  | RemoveEffectDraft
+  | HelpDraft
+  | DodgeDraft
+  | GrappledEscapeDraft
+  | StartConcentrationDraft
+  | StopConcentrationDraft
 
 interface ActivityDraft {
   readonly id: string
@@ -226,7 +334,26 @@ type EventField =
   | 'heroicInspirationMode'
   | 'heroicInspirationPoolId'
   | 'heroicInspirationThreshold'
-type EventFieldValue = string | readonly ConditionConfig[]
+  | 'ability'
+  | 'dc'
+  | 'modifier'
+  | 'sightDependent'
+  | 'successRemovals'
+  | 'failureRemovals'
+  | 'source'
+  | 'target'
+  | 'conditions'
+  | 'effects'
+  | 'owner'
+  | 'grappledConditionId'
+  | 'constitutionModifier'
+type EventFieldValue =
+  | string
+  | boolean
+  | Combatant
+  | Ability
+  | readonly ConditionConfig[]
+  | readonly ConditionRemovalConfig[]
 type DamagePoolField = 'diceCount' | 'dieSides' | 'modifier' | 'damageType'
 
 interface DamagePoolErrors {
@@ -241,6 +368,9 @@ interface EventErrors {
   attackModifier?: string
   saveDc?: string
   saveModifier?: string
+  dc?: string
+  modifier?: string
+  constitutionModifier?: string
   heroicInspiration?: string
 }
 
@@ -248,6 +378,15 @@ interface EventEvaluation {
   readonly errors: EventErrors
   readonly config?: EventConfig
   readonly result?: EventResult
+}
+
+interface RenderableEventResult extends EventResult {
+  readonly stateBefore?: CombatantState
+  readonly stateAfter?: CombatantState
+  readonly boundaryResults?: readonly {
+    readonly label: string
+    readonly state?: CombatantState
+  }[]
 }
 
 function createDefaultDamage(eventId: string): DamageDraft {
@@ -277,6 +416,21 @@ const EVENT_LABELS: Record<EventType, string> = {
   'enemy-attack': 'Enemy attack',
   'player-saving-throw': 'Player saving throw',
   'enemy-saving-throw': 'Enemy saving throw',
+  'player-ability-check': 'Player ability check',
+  'enemy-ability-check': 'Enemy ability check',
+  'player-initiative': 'Player Initiative',
+  'enemy-initiative': 'Enemy Initiative',
+  'player-damage': 'Damage to player',
+  'enemy-damage': 'Damage to enemy',
+  'apply-condition': 'Apply condition',
+  'apply-effect': 'Apply effect',
+  'remove-condition': 'Remove condition',
+  'remove-effect': 'Remove effect',
+  help: 'Help',
+  dodge: 'Dodge',
+  'grappled-escape': 'Grappled escape',
+  'start-concentration': 'Start Concentration',
+  'stop-concentration': 'Stop Concentration',
 }
 
 const numberFormatter = new Intl.NumberFormat('en-US', {
@@ -301,21 +455,160 @@ function createEvent(type: EventType, id: string): EventDraft {
       ...createDefaultInspiration(id),
     }
   }
-  return {
-    id,
-    type,
-    saveDc: '12',
-    saveModifier: '0',
-    saveAbility: 'dexterity',
-    rollMode: 'normal',
-    cover: 'none',
-    failureDamage: 'full',
-    successDamage: 'half',
-    failureConditions: [],
-    successConditions: [],
-    ...createDefaultDamage(id),
-    ...createDefaultInspiration(id),
+  if (type === 'player-saving-throw' || type === 'enemy-saving-throw') {
+    return {
+      id,
+      type,
+      saveDc: '12',
+      saveModifier: '0',
+      saveAbility: 'dexterity',
+      rollMode: 'normal',
+      cover: 'none',
+      failureDamage: 'full',
+      successDamage: 'half',
+      failureConditions: [],
+      successConditions: [],
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
   }
+  if (type === 'player-ability-check' || type === 'enemy-ability-check') {
+    return {
+      id,
+      type,
+      ability: 'dexterity',
+      dc: '12',
+      modifier: '0',
+      rollMode: 'normal',
+      sightDependent: false,
+      successConditions: [],
+      failureConditions: [],
+      successRemovals: [],
+      failureRemovals: [],
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'player-initiative' || type === 'enemy-initiative') {
+    return {
+      id,
+      type,
+      ability: 'dexterity',
+      modifier: '0',
+      rollMode: 'normal',
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'player-damage' || type === 'enemy-damage') {
+    return {
+      id,
+      type,
+      target: type === 'player-damage' ? 'player' : 'enemy',
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'apply-condition') {
+    return {
+      id,
+      type,
+      source: 'player',
+      target: 'enemy',
+      conditions: [],
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'apply-effect') {
+    return {
+      id,
+      type,
+      source: 'player',
+      target: 'enemy',
+      effects: [],
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'remove-condition') {
+    return {
+      id,
+      type,
+      target: 'enemy',
+      conditions: [],
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'remove-effect') {
+    return {
+      id,
+      type,
+      target: 'enemy',
+      effects: [],
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'help') {
+    return {
+      id,
+      type,
+      owner: 'player',
+      target: 'enemy',
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'dodge') {
+    return {
+      id,
+      type,
+      owner: 'player',
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'grappled-escape') {
+    return {
+      id,
+      type,
+      owner: 'player',
+      ability: 'strength',
+      dc: '12',
+      modifier: '0',
+      rollMode: 'normal',
+      sightDependent: false,
+      grappledConditionId: '',
+      successConditions: [],
+      failureConditions: [],
+      successRemovals: [],
+      failureRemovals: [],
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'start-concentration') {
+    return {
+      id,
+      type,
+      owner: 'player',
+      constitutionModifier: '0',
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'stop-concentration') {
+    return {
+      id,
+      type,
+      owner: 'player',
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  throw new Error(`Unsupported event type: ${type}`)
 }
 
 function duplicateEvent(
@@ -335,20 +628,6 @@ function duplicateEvent(
     damagePools,
     heroicInspirationPoolId:
       poolIds.get(event.heroicInspirationPoolId) ?? damagePools[0].id,
-    ...(isAttackDraft(event)
-      ? {
-          hitConditions: event.hitConditions.map((condition) => ({
-            ...condition,
-          })),
-        }
-      : {
-          failureConditions: event.failureConditions.map((condition) => ({
-            ...condition,
-          })),
-          successConditions: event.successConditions.map((condition) => ({
-            ...condition,
-          })),
-        }),
   } as EventDraft
 }
 
@@ -360,6 +639,33 @@ function parseInteger(value: string) {
 
 function isAttackDraft(draft: EventDraft): draft is AttackDraft {
   return draft.type === 'player-attack' || draft.type === 'enemy-attack'
+}
+
+function isSavingThrowDraft(draft: EventDraft): draft is SavingThrowDraft {
+  return (
+    draft.type === 'player-saving-throw' || draft.type === 'enemy-saving-throw'
+  )
+}
+
+function isDamageDraft(
+  draft: EventDraft,
+): draft is AttackDraft | SavingThrowDraft | StandaloneDamageDraft {
+  return (
+    isAttackDraft(draft) ||
+    isSavingThrowDraft(draft) ||
+    draft.type === 'player-damage' ||
+    draft.type === 'enemy-damage'
+  )
+}
+
+function isAbilityCheckDraft(
+  draft: EventDraft,
+): draft is AbilityCheckDraft | GrappledEscapeDraft {
+  return (
+    draft.type === 'player-ability-check' ||
+    draft.type === 'enemy-ability-check' ||
+    draft.type === 'grappled-escape'
+  )
 }
 
 function inspirationPolicyFor(
@@ -392,7 +698,13 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
   const damagePoolErrors: Record<string, DamagePoolErrors> = {}
   const errors: EventErrors = {}
 
-  for (const pool of draft.damagePools) {
+  const usesDamage =
+    isAttackDraft(draft) ||
+    draft.type === 'player-saving-throw' ||
+    draft.type === 'enemy-saving-throw' ||
+    draft.type === 'player-damage' ||
+    draft.type === 'enemy-damage'
+  for (const pool of usesDamage ? draft.damagePools : []) {
     const diceCount = parseInteger(pool.diceCount)
     const dieSides = parseInteger(pool.dieSides)
     const modifier = parseInteger(pool.modifier)
@@ -451,39 +763,191 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
     return { errors, config, result: calculateEvent(config) }
   }
 
-  const saveDc = parseInteger(draft.saveDc)
-  const saveModifier = parseInteger(draft.saveModifier)
-  if (saveDc === undefined || saveDc < 1) {
-    errors.saveDc = 'Enter a whole number of at least 1.'
+  if (
+    draft.type === 'player-saving-throw' ||
+    draft.type === 'enemy-saving-throw'
+  ) {
+    const saveDc = parseInteger(draft.saveDc)
+    const saveModifier = parseInteger(draft.saveModifier)
+    if (saveDc === undefined || saveDc < 1) {
+      errors.saveDc = 'Enter a whole number of at least 1.'
+    }
+    if (saveModifier === undefined)
+      errors.saveModifier = 'Enter a whole number.'
+    const heroicInspiration = inspirationPolicyFor(draft, errors)
+    if (Object.keys(errors).length > 0) return { errors }
+    const config: EventConfig = {
+      id: draft.id,
+      type: draft.type,
+      saveDc: saveDc!,
+      saveModifier: saveModifier!,
+      saveAbility: draft.saveAbility,
+      rollMode: draft.rollMode,
+      cover: draft.cover,
+      damagePools,
+      failureDamage: draft.failureDamage,
+      successDamage: draft.successDamage,
+      failureConditions: draft.failureConditions,
+      successConditions: draft.successConditions,
+      heroicInspiration,
+    }
+    return { errors, config, result: calculateEvent(config) }
   }
-  if (saveModifier === undefined) {
-    errors.saveModifier = 'Enter a whole number.'
-  }
-  const heroicInspiration = inspirationPolicyFor(draft, errors)
-  if (Object.keys(errors).length > 0) return { errors }
 
-  const config: EventConfig = {
-    id: draft.id,
-    type: draft.type,
-    saveDc: saveDc!,
-    saveModifier: saveModifier!,
-    saveAbility: draft.saveAbility,
-    rollMode: draft.rollMode,
-    cover: draft.cover,
-    damagePools,
-    failureDamage: draft.failureDamage,
-    successDamage: draft.successDamage,
-    failureConditions: draft.failureConditions,
-    successConditions: draft.successConditions,
-    heroicInspiration,
+  if (
+    draft.type === 'player-ability-check' ||
+    draft.type === 'enemy-ability-check'
+  ) {
+    const dc = parseInteger(draft.dc)
+    const modifier = parseInteger(draft.modifier)
+    if (dc === undefined || dc < 1)
+      errors.dc = 'Enter a whole number of at least 1.'
+    if (modifier === undefined) errors.modifier = 'Enter a whole number.'
+    if (Object.keys(errors).length > 0) return { errors }
+    const config: EventConfig = {
+      id: draft.id,
+      type: draft.type,
+      ability: draft.ability,
+      dc: dc!,
+      modifier: modifier!,
+      rollMode: draft.rollMode,
+      sightDependent: draft.sightDependent,
+      successConditions: draft.successConditions,
+      failureConditions: draft.failureConditions,
+      successRemovals: draft.successRemovals,
+      failureRemovals: draft.failureRemovals,
+    }
+    return { errors, config, result: calculateEvent(config) }
+  }
+
+  if (draft.type === 'grappled-escape') {
+    const dc = parseInteger(draft.dc)
+    const modifier = parseInteger(draft.modifier)
+    if (dc === undefined || dc < 1)
+      errors.dc = 'Enter a whole number of at least 1.'
+    if (modifier === undefined) errors.modifier = 'Enter a whole number.'
+    if (Object.keys(errors).length > 0) return { errors }
+    const config: EventConfig = {
+      id: draft.id,
+      type: draft.type,
+      owner: draft.owner,
+      ability: draft.ability,
+      dc: dc!,
+      modifier: modifier!,
+      rollMode: draft.rollMode,
+      sightDependent: draft.sightDependent,
+      grappledConditionId: draft.grappledConditionId || undefined,
+      successConditions: draft.successConditions,
+      failureConditions: draft.failureConditions,
+      successRemovals: draft.successRemovals,
+      failureRemovals: draft.failureRemovals,
+    }
+    return { errors, config, result: calculateEvent(config) }
+  }
+
+  if (draft.type === 'player-initiative' || draft.type === 'enemy-initiative') {
+    const modifier = parseInteger(draft.modifier)
+    if (modifier === undefined) errors.modifier = 'Enter a whole number.'
+    if (Object.keys(errors).length > 0) return { errors }
+    const config: EventConfig = {
+      id: draft.id,
+      type: draft.type,
+      ability: draft.ability,
+      modifier: modifier!,
+      rollMode: draft.rollMode,
+    }
+    return { errors, config, result: calculateEvent(config) }
+  }
+
+  if (draft.type === 'player-damage' || draft.type === 'enemy-damage') {
+    const heroicInspiration = inspirationPolicyFor(draft, errors)
+    if (Object.keys(errors).length > 0) return { errors }
+    const config: EventConfig = {
+      id: draft.id,
+      type: draft.type,
+      target: draft.target,
+      damagePools,
+      heroicInspiration,
+    }
+    return { errors, config, result: calculateEvent(config) }
+  }
+
+  let config: EventConfig
+  if (draft.type === 'apply-condition') {
+    config = {
+      id: draft.id,
+      type: draft.type,
+      source: draft.source,
+      target: draft.target,
+      conditions: draft.conditions,
+    }
+  } else if (draft.type === 'apply-effect') {
+    config = {
+      id: draft.id,
+      type: draft.type,
+      source: draft.source,
+      target: draft.target,
+      effects: draft.effects,
+    }
+  } else if (draft.type === 'remove-condition') {
+    config = {
+      id: draft.id,
+      type: draft.type,
+      target: draft.target,
+      conditions: draft.conditions,
+    }
+  } else if (draft.type === 'remove-effect') {
+    config = {
+      id: draft.id,
+      type: draft.type,
+      target: draft.target,
+      effects: draft.effects,
+    }
+  } else if (draft.type === 'help') {
+    config = {
+      id: draft.id,
+      type: draft.type,
+      owner: draft.owner,
+      target: draft.target,
+    }
+  } else if (draft.type === 'dodge') {
+    config = { id: draft.id, type: draft.type, owner: draft.owner }
+  } else if (draft.type === 'start-concentration') {
+    const constitutionModifier = parseInteger(draft.constitutionModifier)
+    if (constitutionModifier === undefined) {
+      errors.constitutionModifier = 'Enter a whole number.'
+      return { errors }
+    }
+    config = {
+      id: draft.id,
+      type: draft.type,
+      owner: draft.owner,
+      constitutionModifier,
+    }
+  } else if (draft.type === 'stop-concentration') {
+    config = { id: draft.id, type: draft.type, owner: draft.owner }
+  } else {
+    return { errors }
   }
   return { errors, config, result: calculateEvent(config) }
 }
 
 function outcomeTypeFor(event: EventDraft): OutcomeType {
-  return event.type === 'player-attack' || event.type === 'enemy-saving-throw'
-    ? 'expected-damage-against-enemies'
-    : 'expected-damage-against-players'
+  if (
+    event.type === 'player-attack' ||
+    event.type === 'enemy-saving-throw' ||
+    event.type === 'enemy-damage'
+  ) {
+    return 'expected-damage-against-enemies'
+  }
+  if (
+    event.type === 'enemy-attack' ||
+    event.type === 'player-saving-throw' ||
+    event.type === 'player-damage'
+  ) {
+    return 'expected-damage-against-players'
+  }
+  return undefined
 }
 
 interface FieldProps {
@@ -503,6 +967,7 @@ function DamageFields({
   addPool: () => void
   removePool: (poolId: string) => void
 }) {
+  if (!isDamageDraft(event)) return null
   const prefix = event.id
   return (
     <fieldset className="damage-section">
@@ -643,6 +1108,7 @@ function DamageFields({
 }
 
 function InspirationFields({ event, update }: FieldProps) {
+  if (!isDamageDraft(event)) return null
   const thresholdId = `${event.id}-inspiration-threshold`
   const poolId = `${event.id}-inspiration-pool`
   return (
@@ -935,7 +1401,11 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
 }
 
 type ConditionField =
-  'hitConditions' | 'failureConditions' | 'successConditions'
+  | 'hitConditions'
+  | 'failureConditions'
+  | 'successConditions'
+  | 'conditions'
+  | 'effects'
 
 function ConditionChoices({
   id,
@@ -1001,24 +1471,360 @@ function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
       </fieldset>
     )
   }
+  if (isSavingThrowDraft(event)) {
+    return (
+      <fieldset className="condition-section">
+        <legend>Conditions on target</legend>
+        <div className="condition-groups">
+          <ConditionChoices
+            id={event.id + '-failure'}
+            field="failureConditions"
+            label="On failure"
+            selected={event.failureConditions}
+            update={update}
+          />
+          <ConditionChoices
+            id={event.id + '-success'}
+            field="successConditions"
+            label="On success"
+            selected={event.successConditions}
+            update={update}
+          />
+        </div>
+      </fieldset>
+    )
+  }
+  if (isAbilityCheckDraft(event)) {
+    return (
+      <fieldset className="condition-section">
+        <legend>Conditions and removals</legend>
+        <div className="condition-groups">
+          <ConditionChoices
+            id={event.id + '-failure'}
+            field="failureConditions"
+            label="On failure"
+            selected={event.failureConditions}
+            update={update}
+          />
+          <ConditionChoices
+            id={event.id + '-success'}
+            field="successConditions"
+            label="On success"
+            selected={event.successConditions}
+            update={update}
+          />
+          <ConditionRemovalChoices
+            id={event.id + '-failure-removals'}
+            label="Remove on failure"
+            selected={event.failureRemovals}
+            onChange={(failureRemovals) =>
+              update('failureRemovals', failureRemovals)
+            }
+          />
+          <ConditionRemovalChoices
+            id={event.id + '-success-removals'}
+            label="Remove on success"
+            selected={event.successRemovals}
+            onChange={(successRemovals) =>
+              update('successRemovals', successRemovals)
+            }
+          />
+        </div>
+      </fieldset>
+    )
+  }
+  return null
+}
+
+function ConditionRemovalChoices({
+  id,
+  label,
+  selected,
+  onChange,
+}: {
+  id: string
+  label: string
+  selected: readonly ConditionRemovalConfig[]
+  onChange: (values: readonly ConditionRemovalConfig[]) => void
+}) {
+  const selectedValues = selected.map((condition) => condition.type)
   return (
-    <fieldset className="condition-section">
-      <legend>Conditions on target</legend>
-      <div className="condition-groups">
-        <ConditionChoices
-          id={event.id + '-failure'}
-          field="failureConditions"
-          label="On failure"
-          selected={event.failureConditions}
-          update={update}
+    <ConditionPicker
+      id={`${id}-picker`}
+      label={label}
+      options={[
+        ...CONDITION_OPTIONS,
+        { value: 'vex' as const, label: CONDITION_LABELS.vex },
+        { value: 'sap' as const, label: CONDITION_LABELS.sap },
+        { value: 'exhaustion' as const, label: CONDITION_LABELS.exhaustion },
+      ]}
+      selected={selectedValues}
+      onChange={(values) => onChange(values.map((type) => ({ type })))}
+      closeOnSelect
+      removeLabel={(option) => `Remove ${option.label} ${label.toLowerCase()}`}
+    />
+  )
+}
+
+function StateEventFields({ event, update }: Omit<FieldProps, 'errors'>) {
+  if (
+    event.type !== 'apply-condition' &&
+    event.type !== 'apply-effect' &&
+    event.type !== 'remove-condition' &&
+    event.type !== 'remove-effect' &&
+    event.type !== 'help' &&
+    event.type !== 'dodge' &&
+    event.type !== 'start-concentration' &&
+    event.type !== 'stop-concentration'
+  ) {
+    return null
+  }
+  const ownerLabel =
+    event.type === 'help' ||
+    event.type === 'dodge' ||
+    event.type.includes('concentration')
+  const targetLabel =
+    event.type === 'apply-condition' ||
+    event.type === 'apply-effect' ||
+    event.type === 'remove-condition' ||
+    event.type === 'remove-effect'
+  const selected =
+    event.type === 'apply-condition'
+      ? event.conditions
+      : event.type === 'apply-effect'
+        ? event.effects
+        : event.type === 'remove-condition'
+          ? event.conditions
+          : event.type === 'remove-effect'
+            ? event.effects
+            : []
+  const options = [
+    ...CONDITION_OPTIONS,
+    { value: 'vex' as const, label: CONDITION_LABELS.vex },
+    { value: 'sap' as const, label: CONDITION_LABELS.sap },
+    { value: 'exhaustion' as const, label: CONDITION_LABELS.exhaustion },
+  ] satisfies readonly ConditionPickerOption<ConditionType>[]
+  return (
+    <fieldset className="state-event-fields">
+      <legend>State change</legend>
+      {ownerLabel &&
+        (event.type === 'help' ||
+          event.type === 'dodge' ||
+          event.type === 'start-concentration' ||
+          event.type === 'stop-concentration') && (
+          <div className="field">
+            <label htmlFor={`${event.id}-owner`}>Owner</label>
+            <select
+              id={`${event.id}-owner`}
+              value={event.owner}
+              onChange={(change) => update('owner', change.target.value)}
+            >
+              <option value="player">Player</option>
+              <option value="enemy">Enemy</option>
+            </select>
+          </div>
+        )}
+      {targetLabel && (
+        <div className="field">
+          <label htmlFor={`${event.id}-target`}>Target</label>
+          <select
+            id={`${event.id}-target`}
+            value={event.target}
+            onChange={(change) => update('target', change.target.value)}
+          >
+            <option value="player">Player</option>
+            <option value="enemy">Enemy</option>
+          </select>
+        </div>
+      )}
+      {(event.type === 'apply-condition' || event.type === 'apply-effect') && (
+        <div className="field">
+          <label htmlFor={`${event.id}-source`}>Source</label>
+          <select
+            id={`${event.id}-source`}
+            value={event.source}
+            onChange={(change) => update('source', change.target.value)}
+          >
+            <option value="player">Player</option>
+            <option value="enemy">Enemy</option>
+          </select>
+        </div>
+      )}
+      {(event.type === 'apply-condition' ||
+        event.type === 'apply-effect' ||
+        event.type === 'remove-condition' ||
+        event.type === 'remove-effect') && (
+        <ConditionPicker
+          id={`${event.id}-state-picker`}
+          label={event.type.includes('effect') ? 'Effects' : 'Conditions'}
+          options={options}
+          selected={selected.map((condition) => condition.type)}
+          onChange={(values) => {
+            const conditions = values.map((type) => ({ type }))
+            update(
+              event.type === 'apply-condition' ||
+                event.type === 'remove-condition'
+                ? 'conditions'
+                : 'effects',
+              conditions,
+            )
+          }}
+          closeOnSelect
         />
-        <ConditionChoices
-          id={event.id + '-success'}
-          field="successConditions"
-          label="On success"
-          selected={event.successConditions}
-          update={update}
+      )}
+      {event.type === 'start-concentration' && (
+        <div className="field">
+          <label htmlFor={`${event.id}-constitution-modifier`}>
+            Concentration Constitution modifier
+          </label>
+          <input
+            id={`${event.id}-constitution-modifier`}
+            type="number"
+            step="1"
+            value={event.constitutionModifier}
+            onChange={(change) =>
+              update('constitutionModifier', change.target.value)
+            }
+          />
+        </div>
+      )}
+    </fieldset>
+  )
+}
+
+function AbilityCheckFields({ event, errors, update }: FieldProps) {
+  if (!isAbilityCheckDraft(event)) return null
+  return (
+    <fieldset className="roll-section">
+      <legend>
+        {event.type === 'grappled-escape'
+          ? 'Grappled escape check'
+          : 'Ability check'}
+      </legend>
+      {event.type === 'grappled-escape' && (
+        <div className="field">
+          <label htmlFor={`${event.id}-owner`}>Owner</label>
+          <select
+            id={`${event.id}-owner`}
+            value={event.owner}
+            onChange={(change) => update('owner', change.target.value)}
+          >
+            <option value="player">Player</option>
+            <option value="enemy">Enemy</option>
+          </select>
+        </div>
+      )}
+      <div className="roll-fields">
+        <div className="field">
+          <label htmlFor={`${event.id}-dc`}>DC</label>
+          <input
+            id={`${event.id}-dc`}
+            type="number"
+            min="1"
+            step="1"
+            value={event.dc}
+            aria-invalid={Boolean(errors.dc)}
+            onChange={(change) => update('dc', change.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor={`${event.id}-modifier`}>Modifier</label>
+          <input
+            id={`${event.id}-modifier`}
+            type="number"
+            step="1"
+            value={event.modifier}
+            aria-invalid={Boolean(errors.modifier)}
+            onChange={(change) => update('modifier', change.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor={`${event.id}-ability`}>Ability</label>
+          <select
+            id={`${event.id}-ability`}
+            value={event.ability}
+            onChange={(change) => update('ability', change.target.value)}
+          >
+            {ABILITIES.map((ability) => (
+              <option key={ability.value} value={ability.value}>
+                {ability.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor={`${event.id}-roll-mode`}>Roll mode</label>
+          <select
+            id={`${event.id}-roll-mode`}
+            value={event.rollMode}
+            onChange={(change) => update('rollMode', change.target.value)}
+          >
+            {ATTACK_ROLL_MODES.map((mode) => (
+              <option key={mode.value} value={mode.value}>
+                {mode.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <label className="checkbox-field">
+        <input
+          type="checkbox"
+          checked={event.sightDependent}
+          onChange={(change) => update('sightDependent', change.target.checked)}
         />
+        Sight dependent
+      </label>
+    </fieldset>
+  )
+}
+
+function InitiativeFields({ event, errors, update }: FieldProps) {
+  if (event.type !== 'player-initiative' && event.type !== 'enemy-initiative')
+    return null
+  return (
+    <fieldset className="roll-section">
+      <legend>Initiative roll</legend>
+      <div className="roll-fields">
+        <div className="field">
+          <label htmlFor={`${event.id}-ability`}>Ability</label>
+          <select
+            id={`${event.id}-ability`}
+            value={event.ability}
+            onChange={(change) => update('ability', change.target.value)}
+          >
+            {ABILITIES.map((ability) => (
+              <option key={ability.value} value={ability.value}>
+                {ability.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor={`${event.id}-modifier`}>Modifier</label>
+          <input
+            id={`${event.id}-modifier`}
+            type="number"
+            step="1"
+            value={event.modifier}
+            aria-invalid={Boolean(errors.modifier)}
+            onChange={(change) => update('modifier', change.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor={`${event.id}-roll-mode`}>Roll mode</label>
+          <select
+            id={`${event.id}-roll-mode`}
+            value={event.rollMode}
+            onChange={(change) => update('rollMode', change.target.value)}
+          >
+            {ATTACK_ROLL_MODES.map((mode) => (
+              <option key={mode.value} value={mode.value}>
+                {mode.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
     </fieldset>
   )
@@ -1029,26 +1835,45 @@ interface ShownConditionTotal {
   readonly target: ConditionTarget
 }
 
-function conditionTargetFor(event: EventDraft): ConditionTarget {
-  return outcomeTypeFor(event) === 'expected-damage-against-enemies'
-    ? 'enemies'
-    : 'players'
+function conditionTargetFor(event: EventDraft): ConditionTarget | undefined {
+  if (event.type === 'apply-condition' || event.type === 'apply-effect') {
+    return event.target === 'enemy' ? 'enemies' : 'players'
+  }
+  if (
+    event.type === 'player-attack' ||
+    event.type === 'enemy-saving-throw' ||
+    event.type === 'player-ability-check' ||
+    event.type === 'grappled-escape'
+  )
+    return 'enemies'
+  if (
+    event.type === 'enemy-attack' ||
+    event.type === 'player-saving-throw' ||
+    event.type === 'enemy-ability-check'
+  )
+    return 'players'
+  return undefined
 }
 
 function configuredConditionTotals(
   event: EventDraft,
 ): readonly ShownConditionTotal[] {
-  const conditions = [
-    ...new Set(
-      isAttackDraft(event)
-        ? event.hitConditions.map((condition) => condition.type)
-        : [...event.failureConditions, ...event.successConditions].map(
-            (condition) => condition.type,
-          ),
-    ),
-  ]
+  const conditions = eventConditionConfigs(event).map(
+    (condition) => condition.type,
+  )
   const target = conditionTargetFor(event)
-  return conditions.map((condition) => ({ condition, target }))
+  if (target === undefined) return []
+  return [...new Set(conditions)].map((condition) => ({ condition, target }))
+}
+
+function eventConditionConfigs(event: EventDraft): readonly ConditionConfig[] {
+  if (isAttackDraft(event)) return event.hitConditions
+  if (isSavingThrowDraft(event) || isAbilityCheckDraft(event)) {
+    return [...event.failureConditions, ...event.successConditions]
+  }
+  if (event.type === 'apply-condition') return event.conditions
+  if (event.type === 'apply-effect') return event.effects
+  return []
 }
 
 interface StateErrors {
@@ -1408,7 +2233,13 @@ function App() {
           })),
         })
       : undefined
-  const shownOutcomeTypes = [...new Set(events.map(outcomeTypeFor))]
+  const shownOutcomeTypes = [
+    ...new Set(
+      events
+        .map(outcomeTypeFor)
+        .filter((type): type is Outcome['type'] => type !== undefined),
+    ),
+  ]
   const shownConditionTotals = [
     ...new Map(
       events
@@ -2121,6 +2952,8 @@ function App() {
                                 const result =
                                   sequence?.eventResults[event.id] ??
                                   evaluation.result
+                                const renderableResult = result as
+                                  RenderableEventResult | undefined
                                 const isAttack =
                                   event.type === 'player-attack' ||
                                   event.type === 'enemy-attack'
@@ -2275,7 +3108,7 @@ function App() {
                                         className={
                                           isAttack
                                             ? 'attack-body'
-                                            : 'saving-body'
+                                            : 'saving-body event-body'
                                         }
                                       >
                                         {isAttack ? (
@@ -2291,7 +3124,7 @@ function App() {
                                               )
                                             }
                                           />
-                                        ) : (
+                                        ) : isSavingThrowDraft(event) ? (
                                           <SavingThrowFields
                                             event={event}
                                             errors={evaluation.errors}
@@ -2304,7 +3137,42 @@ function App() {
                                               )
                                             }
                                           />
-                                        )}
+                                        ) : null}
+                                        <AbilityCheckFields
+                                          event={event}
+                                          errors={evaluation.errors}
+                                          update={(field, value) =>
+                                            updateEvent(
+                                              path,
+                                              event.id,
+                                              field,
+                                              value,
+                                            )
+                                          }
+                                        />
+                                        <InitiativeFields
+                                          event={event}
+                                          errors={evaluation.errors}
+                                          update={(field, value) =>
+                                            updateEvent(
+                                              path,
+                                              event.id,
+                                              field,
+                                              value,
+                                            )
+                                          }
+                                        />
+                                        <StateEventFields
+                                          event={event}
+                                          update={(field, value) =>
+                                            updateEvent(
+                                              path,
+                                              event.id,
+                                              field,
+                                              value,
+                                            )
+                                          }
+                                        />
                                         <DamageFields
                                           event={event}
                                           errors={evaluation.errors}
@@ -2366,15 +3234,52 @@ function App() {
                                         aria-live="polite"
                                       >
                                         <span>
-                                          {isAttack
-                                            ? 'Hit chance'
-                                            : 'Save chance'}
+                                          Execution chance
                                           <strong>
                                             {result
                                               ? percentFormatter.format(
-                                                  result.successProbability,
+                                                  result.executionProbability,
                                                 )
                                               : '—'}
+                                          </strong>
+                                        </span>
+                                        {event.type === 'player-initiative' ||
+                                        event.type === 'enemy-initiative' ? (
+                                          <span>
+                                            Expected initiative
+                                            <strong>
+                                              {result?.outcome.type ===
+                                              'expected-initiative'
+                                                ? numberFormatter.format(
+                                                    result.outcome
+                                                      .expectedTotal,
+                                                  )
+                                                : '—'}
+                                            </strong>
+                                          </span>
+                                        ) : null}
+                                        <span>
+                                          {isAttack
+                                            ? 'Hit chance'
+                                            : event.type ===
+                                                  'player-saving-throw' ||
+                                                event.type ===
+                                                  'enemy-saving-throw' ||
+                                                isAbilityCheckDraft(event)
+                                              ? 'Success chance'
+                                              : 'Result'}
+                                          <strong>
+                                            {result &&
+                                            (isAttack ||
+                                              isSavingThrowDraft(event) ||
+                                              isAbilityCheckDraft(event))
+                                              ? percentFormatter.format(
+                                                  result.successProbability,
+                                                )
+                                              : result?.outcome.type ===
+                                                  'no-damage'
+                                                ? 'Completed'
+                                                : '—'}
                                           </strong>
                                         </span>
                                         {isAttack ? (
@@ -2390,17 +3295,25 @@ function App() {
                                             </strong>
                                           </span>
                                         ) : null}
-                                        <span>
-                                          Expected damage against {target}
-                                          <strong>
-                                            {result
-                                              ? numberFormatter.format(
-                                                  result.outcome
-                                                    .expectedDamage ?? 0,
-                                                )
-                                              : '—'}
-                                          </strong>
-                                        </span>
+                                        {result?.outcome.type ===
+                                          'expected-damage-against-enemies' ||
+                                        result?.outcome.type ===
+                                          'expected-damage-against-players' ? (
+                                          <span>
+                                            Expected damage against {target}
+                                            <strong>
+                                              {numberFormatter.format(
+                                                result.outcome.expectedDamage,
+                                              )}
+                                            </strong>
+                                          </span>
+                                        ) : result?.outcome.type ===
+                                          'no-damage' ? (
+                                          <span>
+                                            Damage outcome
+                                            <strong>No damage</strong>
+                                          </span>
+                                        ) : null}
                                         {result?.conditionApplications.map(
                                           (application) => (
                                             <span key={application.condition}>
@@ -2416,6 +3329,27 @@ function App() {
                                                 )}
                                               </strong>
                                             </span>
+                                          ),
+                                        )}
+                                        {renderableResult?.stateBefore && (
+                                          <StateSummary
+                                            label="State before"
+                                            state={renderableResult.stateBefore}
+                                          />
+                                        )}
+                                        {renderableResult?.stateAfter && (
+                                          <StateSummary
+                                            label="State after"
+                                            state={renderableResult.stateAfter}
+                                          />
+                                        )}
+                                        {renderableResult?.boundaryResults?.map(
+                                          (boundary) => (
+                                            <StateSummary
+                                              key={boundary.label}
+                                              label={boundary.label}
+                                              state={boundary.state}
+                                            />
                                           ),
                                         )}
                                       </div>
