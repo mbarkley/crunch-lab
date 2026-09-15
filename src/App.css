@@ -1142,6 +1142,10 @@ input[aria-invalid='true'] {
   grid-column: span 2;
 }
 
+.attack-roll-section {
+  container-type: inline-size;
+}
+
 .inspiration-section .roll-fields .field:first-child {
   min-width: 170px;
 }
@@ -1264,6 +1268,17 @@ input[aria-invalid='true'] {
   .attack-body .damage-section {
     border-top: 1px solid #e2e6ea;
     border-left: 0;
+  }
+}
+
+@container (max-width: 430px) {
+  .attack-roll-section .roll-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .attack-roll-section .roll-fields .field:nth-child(3),
+  .attack-roll-section .roll-fields .field:last-child {
+    grid-column: 1 / -1;
   }
 }
 

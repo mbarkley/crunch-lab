@@ -1176,7 +1176,7 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
     return null
   }
   return (
-    <fieldset className="roll-section">
+    <fieldset className="roll-section attack-roll-section">
       <legend>Attack roll</legend>
       <Swords aria-hidden="true" size={20} />
       <div className="roll-fields">
