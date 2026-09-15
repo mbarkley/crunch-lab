@@ -904,9 +904,15 @@ function damageDistribution(
       }
       let damage = 0
       for (const [type, typedDamage] of byType) {
-        damage += applyDamageDefenses(typedDamage, type, targetState)
+        // Saving throw consequences modify each combined damage type before
+        // the target's type-specific defenses. Grouping first preserves the
+        // single rounding step for multiple pools of the same type.
+        damage += applyDamageDefenses(
+          applyDamageConsequence(typedDamage, consequence),
+          type,
+          targetState,
+        )
       }
-      damage = applyDamageConsequence(damage, consequence)
       return {
         damage,
         inspirationSpent: pools.some((pool) => pool.inspirationSpent),
@@ -1413,7 +1419,7 @@ function attackTransitions(
       )
       return damageDistribution(
         config,
-        application.state[target],
+        stateAfterD20[target],
         'full',
         critical ? 2 : 1,
         stateAfterD20[attacker].heroicInspiration,
@@ -1529,7 +1535,7 @@ function savingThrowTransitions(
       )
       return damageDistribution(
         config,
-        application.state[target],
+        stateAfterD20[target],
         consequence,
         1,
         stateAfterD20[source].heroicInspiration,
@@ -2463,12 +2469,23 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
     boundaryDistribution: Distribution<BoundaryTransition>,
   ) => {
     for (const outcome of boundaryDistribution.outcomes) {
-      weightedGeneratedResults.push(
-        ...outcome.value.generatedResults.map((generated) => ({
+      for (const generated of outcome.value.generatedResults) {
+        weightedGeneratedResults.push({
           generated,
           probability: outcome.probability,
-        })),
-      )
+        })
+        const generatedOutcome = generated.result.outcome
+        if (
+          generatedOutcome.type === 'expected-damage-against-enemies' ||
+          generatedOutcome.type === 'expected-damage-against-players'
+        ) {
+          totals.set(
+            generatedOutcome.type,
+            (totals.get(generatedOutcome.type) ?? 0) +
+              outcome.probability * generatedOutcome.expectedDamage,
+          )
+        }
+      }
     }
     return boundaryDistribution.map((transition) => transition.state, stateKey)
   }

@@ -181,6 +181,12 @@ describe('timed conditions and persistent state', () => {
       type: 'expected-damage-against-enemies',
       expectedDamage: 1,
     })
+    expect(result.outcomes).toEqual([
+      {
+        type: 'expected-damage-against-enemies',
+        expectedDamage: 1,
+      },
+    ])
   })
 
   it('expires Help and Dodge at the owner next turn and disables Dodge with speed zero', () => {
