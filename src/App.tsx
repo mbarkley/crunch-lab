@@ -122,7 +122,7 @@ const CONDITION_LABELS: Record<ConditionType, string> = {
   sap: 'Sap',
 }
 
-type EventType = EventConfig['type']
+type EventType = EventDraft['type']
 type OutcomeType = Outcome['type']
 
 interface DamagePoolDraft {
@@ -1569,7 +1569,7 @@ function App() {
                 <strong>
                   {outcome === undefined
                     ? '—'
-                    : numberFormatter.format(outcome.expectedDamage)}
+                    : numberFormatter.format(outcome.expectedDamage ?? 0)}
                 </strong>
                 <small>
                   {events.length} {events.length === 1 ? 'event' : 'events'}
@@ -2125,7 +2125,8 @@ function App() {
                                           <strong>
                                             {result
                                               ? numberFormatter.format(
-                                                  result.outcome.expectedDamage,
+                                                  result.outcome
+                                                    .expectedDamage ?? 0,
                                                 )
                                               : '—'}
                                           </strong>

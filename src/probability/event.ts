@@ -1,6 +1,7 @@
 import { Distribution } from './distribution'
 import {
   CONDITION_CATALOG_TYPES,
+  hasEffectiveCondition,
   isConditionImmune,
   isPersistentConditionType,
   TRANSIENT_EFFECT_TYPES,
@@ -89,12 +90,14 @@ export type HeroicInspirationPolicy =
       readonly threshold: number
     }
 
-interface BaseEventConfig extends DamageRollConfig {
+interface BaseEventConfig {
   readonly id: string
   readonly heroicInspiration?: HeroicInspirationPolicy
 }
 
-interface BaseAttackConfig extends BaseEventConfig {
+interface DamageEventConfig extends BaseEventConfig, DamageRollConfig {}
+
+interface BaseAttackConfig extends DamageEventConfig {
   readonly armorClass: number
   readonly attackModifier: number
   readonly rollMode: AttackRollMode
@@ -112,7 +115,7 @@ export interface EnemyAttackConfig extends BaseAttackConfig {
 
 export type AttackConfig = PlayerAttackConfig | EnemyAttackConfig
 
-interface BaseSavingThrowConfig extends BaseEventConfig {
+interface BaseSavingThrowConfig extends DamageEventConfig {
   readonly saveDc: number
   readonly saveModifier: number
   readonly saveAbility: Ability
@@ -133,7 +136,128 @@ export interface EnemySavingThrowConfig extends BaseSavingThrowConfig {
 }
 
 export type SavingThrowConfig = PlayerSavingThrowConfig | EnemySavingThrowConfig
-export type EventConfig = AttackConfig | SavingThrowConfig
+
+export interface ConditionRemovalConfig {
+  readonly type: ConditionType
+  readonly id?: string
+}
+
+interface BaseAbilityCheckConfig extends BaseEventConfig {
+  readonly ability: Ability
+  readonly dc: number
+  readonly modifier: number
+  readonly rollMode: AttackRollMode
+  readonly sightDependent?: boolean
+  readonly successConditions?: readonly ConditionConfig[]
+  readonly failureConditions?: readonly ConditionConfig[]
+  readonly successRemovals?: readonly ConditionRemovalConfig[]
+  readonly failureRemovals?: readonly ConditionRemovalConfig[]
+}
+
+export interface PlayerAbilityCheckConfig extends BaseAbilityCheckConfig {
+  readonly type: 'player-ability-check'
+}
+
+export interface EnemyAbilityCheckConfig extends BaseAbilityCheckConfig {
+  readonly type: 'enemy-ability-check'
+}
+
+export type AbilityCheckConfig =
+  PlayerAbilityCheckConfig | EnemyAbilityCheckConfig
+
+interface BaseInitiativeConfig extends BaseEventConfig {
+  readonly ability: Ability
+  readonly modifier: number
+  readonly rollMode: AttackRollMode
+}
+
+export interface PlayerInitiativeConfig extends BaseInitiativeConfig {
+  readonly type: 'player-initiative'
+}
+
+export interface EnemyInitiativeConfig extends BaseInitiativeConfig {
+  readonly type: 'enemy-initiative'
+}
+
+export type InitiativeConfig = PlayerInitiativeConfig | EnemyInitiativeConfig
+
+interface BaseStandaloneDamageConfig extends DamageEventConfig {
+  readonly target?: Combatant
+}
+
+export interface StandaloneDamageConfig extends BaseStandaloneDamageConfig {
+  readonly type: 'player-damage' | 'enemy-damage'
+}
+
+export interface ApplyConditionEventConfig extends BaseEventConfig {
+  readonly type: 'apply-condition'
+  readonly source: Combatant
+  readonly target: Combatant
+  readonly conditions: readonly ConditionConfig[]
+}
+
+export interface ApplyEffectEventConfig extends BaseEventConfig {
+  readonly type: 'apply-effect'
+  readonly source: Combatant
+  readonly target: Combatant
+  readonly effects: readonly ConditionConfig[]
+}
+
+export interface RemoveConditionEventConfig extends BaseEventConfig {
+  readonly type: 'remove-condition'
+  readonly target: Combatant
+  readonly conditions: readonly ConditionRemovalConfig[]
+}
+
+export interface RemoveEffectEventConfig extends BaseEventConfig {
+  readonly type: 'remove-effect'
+  readonly target: Combatant
+  readonly effects: readonly ConditionRemovalConfig[]
+}
+
+export interface HelpEventConfig extends BaseEventConfig {
+  readonly type: 'help'
+  readonly owner: Combatant
+  readonly target: Combatant
+}
+
+export interface DodgeEventConfig extends BaseEventConfig {
+  readonly type: 'dodge'
+  readonly owner: Combatant
+}
+
+export interface GrappledEscapeConfig extends BaseAbilityCheckConfig {
+  readonly type: 'grappled-escape'
+  readonly owner: Combatant
+  readonly grappledConditionId?: string
+}
+
+export interface StartConcentrationConfig extends BaseEventConfig {
+  readonly type: 'start-concentration'
+  readonly owner: Combatant
+  readonly constitutionModifier: number
+}
+
+export interface StopConcentrationConfig extends BaseEventConfig {
+  readonly type: 'stop-concentration'
+  readonly owner: Combatant
+}
+
+export type EventConfig =
+  | AttackConfig
+  | SavingThrowConfig
+  | AbilityCheckConfig
+  | InitiativeConfig
+  | StandaloneDamageConfig
+  | ApplyConditionEventConfig
+  | ApplyEffectEventConfig
+  | RemoveConditionEventConfig
+  | RemoveEffectEventConfig
+  | HelpEventConfig
+  | DodgeEventConfig
+  | GrappledEscapeConfig
+  | StartConcentrationConfig
+  | StopConcentrationConfig
 
 export type ActivityType = 'action' | 'bonus-action'
 
@@ -152,6 +276,8 @@ export interface CombatantState {
   readonly conditionImmunities: readonly PersistentConditionType[]
   readonly exhaustion: ExhaustionLevel
   readonly concentration: ConcentrationState | null
+  readonly helped: boolean
+  readonly dodging: boolean
 }
 
 export interface SequenceState {
@@ -192,8 +318,20 @@ export interface ExpectedDamageAgainstPlayers {
   readonly expectedDamage: number
 }
 
-export type Outcome =
+export interface ExpectedInitiative {
+  readonly type: 'expected-initiative'
+  readonly expectedTotal: number
+  readonly expectedDamage?: number
+}
+
+export interface NoDamageOutcome {
+  readonly type: 'no-damage'
+  readonly expectedDamage?: number
+}
+
+export type DamageOutcome =
   ExpectedDamageAgainstEnemies | ExpectedDamageAgainstPlayers
+export type Outcome = DamageOutcome | ExpectedInitiative | NoDamageOutcome
 
 export interface ConditionApplication {
   readonly condition: ConditionType
@@ -226,6 +364,7 @@ interface EventTransition {
   readonly success: boolean
   readonly critical: boolean
   readonly exactDamage: number
+  readonly rollTotal?: number
   readonly appliedConditions: readonly ConditionType[]
 }
 
@@ -235,7 +374,7 @@ interface DamagePoolOutcome {
   readonly inspirationSpent: boolean
 }
 
-interface DamageOutcome {
+interface DamageRollOutcome {
   readonly damage: number
   readonly inspirationSpent: boolean
 }
@@ -295,6 +434,8 @@ export const INITIAL_SEQUENCE_STATE: SequenceState = {
     conditionImmunities: [],
     exhaustion: 0,
     concentration: null,
+    helped: false,
+    dodging: false,
   },
   enemy: {
     vex: false,
@@ -307,6 +448,8 @@ export const INITIAL_SEQUENCE_STATE: SequenceState = {
     conditionImmunities: [],
     exhaustion: 0,
     concentration: null,
+    helped: false,
+    dodging: false,
   },
 }
 
@@ -318,6 +461,12 @@ function assertInteger(value: number, name: string, minimum?: number) {
   if (!Number.isInteger(value) || (minimum !== undefined && value < minimum)) {
     const lowerBound = minimum === undefined ? '' : ` of at least ${minimum}`
     throw new RangeError(`${name} must be an integer${lowerBound}`)
+  }
+}
+
+function assertCombatant(value: Combatant, name: string) {
+  if (value !== 'player' && value !== 'enemy') {
+    throw new RangeError(`${name} must be player or enemy`)
   }
 }
 
@@ -469,14 +618,20 @@ function validateDamageRoll(config: DamageRollConfig) {
   }
 }
 
-function validateInspirationPolicy(config: EventConfig) {
+function validateInspirationPolicy(
+  config: BaseEventConfig & {
+    readonly damagePools?: readonly DamagePoolConfig[]
+  },
+) {
   const policy = config.heroicInspiration
   if (!policy || policy.type === 'd20-after-failure') return
   if (policy.type !== 'damage-pool-threshold') {
     throw new RangeError('Invalid Heroic Inspiration policy')
   }
   assertInteger(policy.threshold, 'Damage reroll threshold')
-  if (!config.damagePools.some((pool) => pool.id === policy.damagePoolId)) {
+  if (
+    !(config.damagePools ?? []).some((pool) => pool.id === policy.damagePoolId)
+  ) {
     throw new RangeError(
       'Heroic Inspiration damage pool must belong to the event',
     )
@@ -584,7 +739,10 @@ function applyDamageDefenses(
   return adjusted
 }
 
-function damageOutcome(target: 'enemies' | 'players', value: number): Outcome {
+function damageOutcome(
+  target: 'enemies' | 'players',
+  value: number,
+): DamageOutcome {
   return target === 'enemies'
     ? {
         type: 'expected-damage-against-enemies',
@@ -596,13 +754,17 @@ function damageOutcome(target: 'enemies' | 'players', value: number): Outcome {
       }
 }
 
+function noDamageOutcome(): NoDamageOutcome {
+  return { type: 'no-damage' }
+}
+
 function damageDistribution(
-  config: EventConfig,
+  config: DamageEventConfig,
   targetState: CombatantState,
   consequence: DamageConsequence,
   diceMultiplier: number,
   inspirationAvailable: boolean,
-): Distribution<DamageOutcome> {
+): Distribution<DamageRollOutcome> {
   validateDamageRoll(config)
   validateInspirationPolicy(config)
   if (consequence === 'none') {
@@ -678,9 +840,11 @@ function effectiveRollMode(
   manualMode: AttackRollMode,
   hasVex: boolean,
   hasSap: boolean,
+  hasHelp = false,
+  hasDodge = false,
 ): AttackRollMode {
-  const hasAdvantage = manualMode === 'advantage' || hasVex
-  const hasDisadvantage = manualMode === 'disadvantage' || hasSap
+  const hasAdvantage = manualMode === 'advantage' || hasVex || hasHelp
+  const hasDisadvantage = manualMode === 'disadvantage' || hasSap || hasDodge
   if (hasAdvantage === hasDisadvantage) return 'normal'
   return hasAdvantage ? 'advantage' : 'disadvantage'
 }
@@ -766,6 +930,73 @@ export function applyConditionConfigs(
   }
 }
 
+function validateConditionRemovals(
+  removals: readonly ConditionRemovalConfig[],
+) {
+  const ids = new Set<string>()
+  for (const removal of removals) {
+    if (!CONDITION_TYPES.includes(removal.type)) {
+      throw new RangeError('Condition removal is not supported')
+    }
+    if (removal.id !== undefined) {
+      if (removal.id.length === 0) {
+        throw new RangeError('Condition removal ID must not be empty')
+      }
+      if (ids.has(removal.id)) {
+        throw new RangeError(`Duplicate condition removal ID: ${removal.id}`)
+      }
+      ids.add(removal.id)
+    }
+  }
+}
+
+export function removeConditionConfigs(
+  state: SequenceState,
+  target: Combatant,
+  removals: readonly ConditionRemovalConfig[],
+): {
+  readonly state: SequenceState
+  readonly removedConditions: readonly ConditionType[]
+} {
+  validateConditionRemovals(removals)
+  let next = state
+  const removed = new Set<ConditionType>()
+  for (const removal of removals) {
+    const targetState = next[target]
+    if (removal.type === 'vex' || removal.type === 'sap') {
+      if (targetState[removal.type]) removed.add(removal.type)
+      next = {
+        ...next,
+        [target]: { ...targetState, [removal.type]: false },
+      }
+      continue
+    }
+    if (removal.type === 'exhaustion') {
+      if (targetState.exhaustion > 0) removed.add(removal.type)
+      next = { ...next, [target]: { ...targetState, exhaustion: 0 } }
+      continue
+    }
+    const matches = targetState.conditions.filter(
+      (condition) =>
+        condition.type === removal.type &&
+        (removal.id === undefined || condition.id === removal.id),
+    )
+    if (matches.length === 0) continue
+    const matchIds = new Set(matches.map((condition) => condition.id))
+    next = {
+      ...next,
+      [target]: {
+        ...targetState,
+        conditions: targetState.conditions.filter(
+          (condition) => !matchIds.has(condition.id),
+        ),
+      },
+    }
+    removed.add(removal.type)
+  }
+  return { state: next, removedConditions: [...removed] }
+}
+
 function spendInspiration(
   state: SequenceState,
   combatant: Combatant,
@@ -795,6 +1026,8 @@ function stateKey(state: SequenceState) {
         value.exhaustion,
         [...value.conditionImmunities].sort().join(','),
         value.concentration?.constitutionModifier ?? '',
+        value.helped,
+        value.dodging,
         value.conditions
           .map(
             (condition) =>
@@ -817,6 +1050,7 @@ function transitionKey(transition: EventTransition) {
     transition.success,
     transition.critical,
     transition.exactDamage,
+    transition.rollTotal ?? '',
     ...transition.appliedConditions,
   ].join(':')
 }
@@ -851,13 +1085,16 @@ function attackTransitions(
     config.rollMode,
     state[target].vex,
     state[attacker].sap,
+    state[attacker].helped,
+    state[target].dodging &&
+      !hasEffectiveCondition(state[target].conditions, 'incapacitated'),
   )
   const canRerollD20 =
     state[attacker].heroicInspiration &&
     config.heroicInspiration?.type === 'd20-after-failure'
   const consumedState: SequenceState = {
     ...state,
-    [attacker]: { ...state[attacker], sap: false },
+    [attacker]: { ...state[attacker], sap: false, helped: false },
     [target]: { ...state[target], vex: false },
   }
 
@@ -951,20 +1188,27 @@ function savingThrowTransitions(
     config.heroicInspiration?.type === 'd20-after-failure'
   const bonus =
     config.saveAbility === 'dexterity' ? coverBonus(config.cover) : 0
+  const saveMode = effectiveRollMode(
+    mode,
+    config.saveAbility === 'dexterity' &&
+      state[target].dodging &&
+      !hasEffectiveCondition(state[target].conditions, 'incapacitated'),
+    false,
+  )
   const succeeds = (roll: number) =>
     roll + config.saveModifier + bonus >= config.saveDc
   const rolls = automaticFailure
     ? Distribution.constant<readonly number[]>([0], (values) =>
         values.join(','),
       )
-    : d20Rolls(mode)
+    : d20Rolls(saveMode)
 
   return rolls.flatMap((values) => {
-    const original = automaticFailure ? 0 : selectedD20(values, mode)
+    const original = automaticFailure ? 0 : selectedD20(values, saveMode)
     const initialSuccess = !automaticFailure && succeeds(original)
     const resolvedRolls =
       !initialSuccess && canRerollD20
-        ? rerolledD20(values, mode)
+        ? rerolledD20(values, saveMode)
         : Distribution.constant(original, (roll) => roll)
     return resolvedRolls.flatMap((roll) => {
       const success = !automaticFailure && succeeds(roll)
@@ -1003,6 +1247,268 @@ function savingThrowTransitions(
   }, transitionKey)
 }
 
+function abilityCheckTransitions(
+  config: AbilityCheckConfig | GrappledEscapeConfig,
+  state: SequenceState,
+): Distribution<EventTransition> {
+  assertInteger(config.dc, 'Ability check DC', 1)
+  assertInteger(config.modifier, 'Ability check modifier')
+  if (!ABILITIES.includes(config.ability)) {
+    throw new RangeError('Ability check ability is invalid')
+  }
+  if (!ATTACK_ROLL_MODES.includes(config.rollMode)) {
+    throw new RangeError('Ability check roll mode is invalid')
+  }
+  validateConditions(config.successConditions ?? [])
+  validateConditions(config.failureConditions ?? [])
+  validateConditionRemovals(config.successRemovals ?? [])
+  validateConditionRemovals(config.failureRemovals ?? [])
+  validateInspirationPolicy(config)
+  const actor: Combatant =
+    config.type === 'grappled-escape'
+      ? config.owner
+      : config.type === 'player-ability-check'
+        ? 'player'
+        : 'enemy'
+  assertCombatant(actor, 'Ability check owner')
+  const target: Combatant = actor
+  const hasDisadvantage =
+    hasEffectiveCondition(state[actor].conditions, 'poisoned') ||
+    hasEffectiveCondition(state[actor].conditions, 'frightened')
+  const mode = effectiveRollMode(
+    config.rollMode,
+    false,
+    hasDisadvantage,
+    false,
+    false,
+  )
+  const sightFailure =
+    config.sightDependent === true &&
+    hasEffectiveCondition(state[actor].conditions, 'blinded')
+  const succeeds = (roll: number) =>
+    !sightFailure &&
+    roll + config.modifier - state[actor].exhaustion * 2 >= config.dc
+  const canRerollD20 =
+    state[actor].heroicInspiration &&
+    config.heroicInspiration?.type === 'd20-after-failure'
+  return d20Rolls(mode).flatMap((values) => {
+    const original = selectedD20(values, mode)
+    const initialSuccess = succeeds(original)
+    const resolvedRolls =
+      !initialSuccess && canRerollD20
+        ? rerolledD20(values, mode)
+        : Distribution.constant(original, (roll) => roll)
+    return resolvedRolls.flatMap((roll) => {
+      const success = succeeds(roll)
+      const stateAfterD20 = spendInspiration(
+        state,
+        actor,
+        !initialSuccess && canRerollD20,
+      )
+      const branch = success ? 'success' : 'failure'
+      const applied = applyConditionConfigs(
+        stateAfterD20,
+        target,
+        actor === target ? (actor === 'player' ? 'enemy' : 'player') : actor,
+        `${config.id}:${branch}`,
+        success
+          ? (config.successConditions ?? [])
+          : (config.failureConditions ?? []),
+      )
+      const removals = success
+        ? (config.successRemovals ?? [])
+        : (config.failureRemovals ?? [])
+      const removed = removeConditionConfigs(applied.state, target, removals)
+      const escaped =
+        config.type === 'grappled-escape' && success
+          ? removeConditionConfigs(removed.state, target, [
+              { type: 'grappled', id: config.grappledConditionId },
+            ])
+          : removed
+      return Distribution.constant(
+        {
+          state: escaped.state,
+          success,
+          critical: false,
+          exactDamage: 0,
+          appliedConditions: applied.appliedConditions,
+        },
+        transitionKey,
+      )
+    }, transitionKey)
+  }, transitionKey)
+}
+
+function initiativeTransitions(
+  config: InitiativeConfig,
+  state: SequenceState,
+): Distribution<EventTransition> {
+  assertInteger(config.modifier, 'Initiative modifier')
+  if (!ABILITIES.includes(config.ability)) {
+    throw new RangeError('Initiative ability is invalid')
+  }
+  if (!ATTACK_ROLL_MODES.includes(config.rollMode)) {
+    throw new RangeError('Initiative roll mode is invalid')
+  }
+  const actor: Combatant =
+    config.type === 'player-initiative' ? 'player' : 'enemy'
+  const mode = effectiveRollMode(
+    config.rollMode,
+    hasEffectiveCondition(state[actor].conditions, 'invisible'),
+    false,
+  )
+  return d20Rolls(mode).map(
+    (values) => ({
+      state,
+      success: true,
+      critical: false,
+      exactDamage: 0,
+      rollTotal:
+        selectedD20(values, mode) +
+        config.modifier -
+        state[actor].exhaustion * 2,
+      appliedConditions: [],
+    }),
+    transitionKey,
+  )
+}
+
+function standaloneDamageTransitions(
+  config: StandaloneDamageConfig,
+  state: SequenceState,
+): Distribution<EventTransition> {
+  validateDamageRoll(config)
+  validateInspirationPolicy(config)
+  const target: Combatant = config.type === 'player-damage' ? 'player' : 'enemy'
+  assertCombatant(target, 'Standalone damage target')
+  if (config.target !== undefined && config.target !== target) {
+    throw new RangeError('Standalone damage target does not match its type')
+  }
+  const source: Combatant = target === 'player' ? 'enemy' : 'player'
+  return damageDistribution(
+    config,
+    state[target],
+    'full',
+    1,
+    state[source].heroicInspiration,
+  ).map(
+    (damage) => ({
+      state: spendInspiration(state, source, damage.inspirationSpent),
+      success: true,
+      critical: false,
+      exactDamage: damage.damage,
+      appliedConditions: [],
+    }),
+    transitionKey,
+  )
+}
+
+function stateEventTransitions(
+  config:
+    | ApplyConditionEventConfig
+    | ApplyEffectEventConfig
+    | RemoveConditionEventConfig
+    | RemoveEffectEventConfig
+    | HelpEventConfig
+    | DodgeEventConfig
+    | StartConcentrationConfig
+    | StopConcentrationConfig,
+  state: SequenceState,
+): Distribution<EventTransition> {
+  let next = state
+  let appliedConditions: readonly ConditionType[] = []
+  switch (config.type) {
+    case 'apply-condition': {
+      assertCombatant(config.source, 'Condition source')
+      assertCombatant(config.target, 'Condition target')
+      const result = applyConditionConfigs(
+        state,
+        config.target,
+        config.source,
+        config.id,
+        config.conditions,
+      )
+      next = result.state
+      appliedConditions = result.appliedConditions
+      break
+    }
+    case 'apply-effect': {
+      assertCombatant(config.source, 'Effect source')
+      assertCombatant(config.target, 'Effect target')
+      const result = applyConditionConfigs(
+        state,
+        config.target,
+        config.source,
+        config.id,
+        config.effects,
+      )
+      next = result.state
+      appliedConditions = result.appliedConditions
+      break
+    }
+    case 'remove-condition':
+      assertCombatant(config.target, 'Condition target')
+      next = removeConditionConfigs(
+        state,
+        config.target,
+        config.conditions,
+      ).state
+      break
+    case 'remove-effect':
+      assertCombatant(config.target, 'Effect target')
+      next = removeConditionConfigs(state, config.target, config.effects).state
+      break
+    case 'help':
+      assertCombatant(config.owner, 'Help owner')
+      assertCombatant(config.target, 'Help target')
+      next = {
+        ...state,
+        [config.target]: { ...state[config.target], helped: true },
+      }
+      break
+    case 'dodge':
+      assertCombatant(config.owner, 'Dodge owner')
+      next = {
+        ...state,
+        [config.owner]: { ...state[config.owner], dodging: true },
+      }
+      break
+    case 'start-concentration':
+      assertCombatant(config.owner, 'Concentration owner')
+      assertInteger(
+        config.constitutionModifier,
+        'Concentration Constitution modifier',
+      )
+      next = {
+        ...state,
+        [config.owner]: {
+          ...state[config.owner],
+          concentration: {
+            constitutionModifier: config.constitutionModifier,
+          },
+        },
+      }
+      break
+    case 'stop-concentration':
+      assertCombatant(config.owner, 'Concentration owner')
+      next = {
+        ...state,
+        [config.owner]: { ...state[config.owner], concentration: null },
+      }
+      break
+  }
+  return Distribution.constant(
+    {
+      state: next,
+      success: true,
+      critical: false,
+      exactDamage: 0,
+      appliedConditions,
+    },
+    transitionKey,
+  )
+}
+
 function eventTransitions(config: EventConfig, state: SequenceState) {
   switch (config.type) {
     case 'player-attack':
@@ -1011,25 +1517,69 @@ function eventTransitions(config: EventConfig, state: SequenceState) {
     case 'player-saving-throw':
     case 'enemy-saving-throw':
       return savingThrowTransitions(config, state)
+    case 'player-ability-check':
+    case 'enemy-ability-check':
+      return abilityCheckTransitions(config, state)
+    case 'grappled-escape':
+      return abilityCheckTransitions(config, state)
+    case 'player-initiative':
+    case 'enemy-initiative':
+      return initiativeTransitions(config, state)
+    case 'player-damage':
+    case 'enemy-damage':
+      return standaloneDamageTransitions(config, state)
+    case 'apply-condition':
+    case 'apply-effect':
+    case 'remove-condition':
+    case 'remove-effect':
+    case 'help':
+    case 'dodge':
+    case 'start-concentration':
+    case 'stop-concentration':
+      return stateEventTransitions(config, state)
   }
 }
 
 function configuredConditions(config: EventConfig) {
-  return [
-    ...new Set(
-      config.type === 'player-attack' || config.type === 'enemy-attack'
-        ? config.hitConditions.map((condition) => condition.type)
-        : [...config.failureConditions, ...config.successConditions].map(
-            (condition) => condition.type,
-          ),
-    ),
-  ]
+  const conditions = (() => {
+    switch (config.type) {
+      case 'player-attack':
+      case 'enemy-attack':
+        return config.hitConditions
+      case 'player-saving-throw':
+      case 'enemy-saving-throw':
+        return [...config.failureConditions, ...config.successConditions]
+      case 'player-ability-check':
+      case 'enemy-ability-check':
+      case 'grappled-escape':
+        return [
+          ...(config.failureConditions ?? []),
+          ...(config.successConditions ?? []),
+        ]
+      case 'apply-condition':
+        return config.conditions
+      case 'apply-effect':
+        return config.effects
+      default:
+        return []
+    }
+  })()
+  return [...new Set(conditions.map((condition) => condition.type))]
 }
 
-function eventTarget(config: EventConfig): ConditionTarget {
-  return config.type === 'player-attack' || config.type === 'enemy-saving-throw'
-    ? 'enemies'
-    : 'players'
+function eventTarget(config: EventConfig): ConditionTarget | undefined {
+  switch (config.type) {
+    case 'player-attack':
+    case 'enemy-saving-throw':
+    case 'enemy-damage':
+      return 'enemies'
+    case 'enemy-attack':
+    case 'player-saving-throw':
+    case 'player-damage':
+      return 'players'
+    default:
+      return undefined
+  }
 }
 
 function resultFromTransitions(
@@ -1037,6 +1587,28 @@ function resultFromTransitions(
   transitions: Distribution<EventTransition>,
 ): EventResult {
   const target = eventTarget(config)
+  if (
+    config.type === 'player-initiative' ||
+    config.type === 'enemy-initiative'
+  ) {
+    return {
+      successProbability: 1,
+      outcome: {
+        type: 'expected-initiative',
+        expectedTotal: normalizeCalculation(
+          transitions.expectedValue((transition) => transition.rollTotal ?? 0),
+        ),
+      },
+      conditionApplications: [],
+    }
+  }
+  const outcome =
+    target === undefined
+      ? noDamageOutcome()
+      : damageOutcome(
+          target,
+          transitions.expectedValue((transition) => transition.exactDamage),
+        )
   return {
     successProbability: normalizeCalculation(
       transitions.probabilityOf((transition) => transition.success),
@@ -1048,10 +1620,7 @@ function resultFromTransitions(
           ),
         }
       : {}),
-    outcome: damageOutcome(
-      target,
-      transitions.expectedValue((transition) => transition.exactDamage),
-    ),
+    outcome,
     conditionApplications: configuredConditions(config).map((condition) => ({
       condition,
       probability: normalizeCalculation(
@@ -1075,6 +1644,20 @@ export function calculateAttack(config: AttackConfig): EventResult {
 }
 
 export function calculateSavingThrow(config: SavingThrowConfig): EventResult {
+  return calculateSingleEvent(config)
+}
+
+export function calculateAbilityCheck(
+  config: AbilityCheckConfig | GrappledEscapeConfig,
+): EventResult {
+  return calculateSingleEvent(config)
+}
+
+export function calculateInitiative(config: InitiativeConfig): EventResult {
+  return calculateSingleEvent(config)
+}
+
+export function calculateDamage(config: StandaloneDamageConfig): EventResult {
   return calculateSingleEvent(config)
 }
 
@@ -1114,10 +1697,30 @@ function validateSequence(config: SequenceConfig) {
           const conditionLists =
             event.type === 'player-attack' || event.type === 'enemy-attack'
               ? [{ branch: 'hit', conditions: event.hitConditions }]
-              : [
-                  { branch: 'failure', conditions: event.failureConditions },
-                  { branch: 'success', conditions: event.successConditions },
-                ]
+              : event.type === 'player-saving-throw' ||
+                  event.type === 'enemy-saving-throw'
+                ? [
+                    { branch: 'failure', conditions: event.failureConditions },
+                    { branch: 'success', conditions: event.successConditions },
+                  ]
+                : event.type === 'player-ability-check' ||
+                    event.type === 'enemy-ability-check' ||
+                    event.type === 'grappled-escape'
+                  ? [
+                      {
+                        branch: 'failure',
+                        conditions: event.failureConditions ?? [],
+                      },
+                      {
+                        branch: 'success',
+                        conditions: event.successConditions ?? [],
+                      },
+                    ]
+                  : event.type === 'apply-condition'
+                    ? [{ branch: 'apply', conditions: event.conditions }]
+                    : event.type === 'apply-effect'
+                      ? [{ branch: 'apply', conditions: event.effects }]
+                      : []
           for (const { branch, conditions } of conditionLists) {
             validateConditions(conditions)
             conditions.forEach((condition, index) => {
@@ -1155,12 +1758,18 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
     )
     const result = resultFromTransitions(event, transitions)
     eventResults[event.id] = result
-    totals.set(
-      result.outcome.type,
-      (totals.get(result.outcome.type) ?? 0) + result.outcome.expectedDamage,
-    )
+    if (
+      result.outcome.type === 'expected-damage-against-enemies' ||
+      result.outcome.type === 'expected-damage-against-players'
+    ) {
+      totals.set(
+        result.outcome.type,
+        (totals.get(result.outcome.type) ?? 0) + result.outcome.expectedDamage,
+      )
+    }
     const target = eventTarget(event)
     for (const application of result.conditionApplications) {
+      if (target === undefined) continue
       const key = `${application.condition}:${target}`
       const current = conditionTotals.get(key)
       conditionTotals.set(key, {

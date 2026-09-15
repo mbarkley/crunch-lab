@@ -30,6 +30,8 @@ Attacks can add Vex or Sap to their target on a hit. Saving throws can add eithe
 
 Every event produces a typed outcome. The summary groups expected damage against enemies separately from expected damage against players, reports each event's condition application chance, and shows the expected number of times each configured condition is applied to players and enemies across the sequence.
 
+The event domain also accepts pure ability checks, Initiative rolls, standalone typed damage, condition/effect application and removal, Help, Dodge, Grappled escape, and Concentration start/stop events. Initiative results report expected totals; state-only events report no damage. Help and Dodge state is available to later attacks and saves, while timing, expiration, and action-resource scheduling remain a later sequence layer.
+
 ## Deferred
 
 Named targets and multiple combatants, turn-based condition expiration, persistence, import/export, full probability charts, accounts, and a backend remain deferred. Total Cover, spatial targeting, hit points, and shared damage rolls across multiple targets remain outside the current model.
