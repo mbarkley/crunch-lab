@@ -31,6 +31,7 @@ import type {
   DamageType,
   EventConfig,
   EventResult,
+  GeneratedBoundaryResult,
   HeroicInspirationPolicy,
   Outcome,
   PersistentConditionType,
@@ -42,7 +43,11 @@ import {
   calculateSequence,
   INITIAL_SEQUENCE_STATE,
 } from './probability/event'
-import type { CombatantState, SequenceState } from './probability/event'
+import type {
+  CombatantState,
+  SequenceState,
+  StateProbability,
+} from './probability/event'
 import './App.css'
 
 const DAMAGE_DIE_SIDES = [4, 6, 8, 10, 12, 20] as const
@@ -381,12 +386,8 @@ interface EventEvaluation {
 }
 
 interface RenderableEventResult extends EventResult {
-  readonly stateBefore?: CombatantState
-  readonly stateAfter?: CombatantState
-  readonly boundaryResults?: readonly {
-    readonly label: string
-    readonly state?: CombatantState
-  }[]
+  readonly stateBefore?: readonly StateProbability[]
+  readonly stateAfter?: readonly StateProbability[]
 }
 
 function createDefaultDamage(eventId: string): DamageDraft {
@@ -2147,6 +2148,106 @@ function EventTypeButtons({
   ))
 }
 
+const GENERATED_RESULT_LABELS: Record<GeneratedBoundaryResult['type'], string> =
+  {
+    'repeated-save': 'Repeated save',
+    'ongoing-damage': 'Ongoing damage',
+    'concentration-save': 'Concentration save',
+  }
+
+function GeneratedBoundaryResults({
+  results,
+}: {
+  readonly results: readonly GeneratedBoundaryResult[]
+}) {
+  if (results.length === 0) return null
+  return (
+    <section
+      className="generated-boundary-results"
+      aria-labelledby="generated-boundary-results-title"
+    >
+      <div className="workspace-heading">
+        <div>
+          <p className="eyebrow">Scheduler</p>
+          <h2 id="generated-boundary-results-title">
+            Generated boundary results
+          </h2>
+        </div>
+        <span className="workspace-note">Triggered at turn boundaries</span>
+      </div>
+      <div className="generated-boundary-list">
+        {results.map((generated) => {
+          const outcome = generated.result.outcome
+          return (
+            <article
+              className="generated-boundary-card"
+              key={generated.id}
+              aria-labelledby={`${generated.id}-title`}
+            >
+              <h3 id={`${generated.id}-title`}>
+                {GENERATED_RESULT_LABELS[generated.type]} ·{' '}
+                {generated.owner === 'player' ? 'Player' : 'Enemy'} ·{' '}
+                {generated.boundary} boundary
+              </h3>
+              <div className="attack-results" aria-live="polite">
+                <span>
+                  Execution chance
+                  <strong>
+                    {percentFormatter.format(
+                      generated.result.executionProbability,
+                    )}
+                  </strong>
+                </span>
+                <span>
+                  Success chance
+                  <strong>
+                    {percentFormatter.format(
+                      generated.result.successProbability,
+                    )}
+                  </strong>
+                </span>
+                {outcome.type === 'expected-initiative' ? (
+                  <span>
+                    Expected initiative
+                    <strong>
+                      {numberFormatter.format(outcome.expectedTotal)}
+                    </strong>
+                  </span>
+                ) : outcome.type === 'expected-damage-against-enemies' ||
+                  outcome.type === 'expected-damage-against-players' ? (
+                  <span>
+                    Expected damage
+                    <strong>
+                      {numberFormatter.format(outcome.expectedDamage)}
+                    </strong>
+                  </span>
+                ) : (
+                  <span>
+                    Damage outcome
+                    <strong>No damage</strong>
+                  </span>
+                )}
+              </div>
+              {generated.result.stateBefore && (
+                <StateSummary
+                  label="State before"
+                  state={generated.result.stateBefore}
+                />
+              )}
+              {generated.result.stateAfter && (
+                <StateSummary
+                  label="State after"
+                  state={generated.result.stateAfter}
+                />
+              )}
+            </article>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 function App() {
   const [rounds, setRounds] = useState<RoundDraft[]>([
     {
@@ -3343,15 +3444,6 @@ function App() {
                                             state={renderableResult.stateAfter}
                                           />
                                         )}
-                                        {renderableResult?.boundaryResults?.map(
-                                          (boundary) => (
-                                            <StateSummary
-                                              key={boundary.label}
-                                              label={boundary.label}
-                                              state={boundary.state}
-                                            />
-                                          ),
-                                        )}
                                       </div>
                                     </article>
                                   </li>
@@ -3486,6 +3578,7 @@ function App() {
           </button>
         </div>
       </section>
+      <GeneratedBoundaryResults results={sequence?.generatedResults ?? []} />
     </main>
   )
 }
