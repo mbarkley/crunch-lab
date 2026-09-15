@@ -4,6 +4,7 @@ import {
   calculateEvent,
   calculateSavingThrow,
   calculateSequence,
+  INITIAL_SEQUENCE_STATE,
 } from './event'
 import type {
   AttackConfig,
@@ -21,9 +22,17 @@ const playerAttack = (
   armorClass: 12,
   attackModifier: 0,
   rollMode: 'normal',
+  cover: 'none',
   hitConditions: [],
-  damagePools: [{ diceCount: 1, dieSides: 8 }],
-  damageModifier: 0,
+  damagePools: [
+    {
+      id: 'damage-1',
+      diceCount: 1,
+      dieSides: 8,
+      modifier: 0,
+      damageType: 'slashing',
+    },
+  ],
   ...overrides,
 })
 
@@ -34,8 +43,18 @@ const playerSave = (
   type: 'player-saving-throw',
   saveDc: 12,
   saveModifier: 0,
-  damagePools: [{ diceCount: 1, dieSides: 8 }],
-  damageModifier: 0,
+  saveAbility: 'dexterity',
+  rollMode: 'normal',
+  cover: 'none',
+  damagePools: [
+    {
+      id: 'damage-1',
+      diceCount: 1,
+      dieSides: 8,
+      modifier: 0,
+      damageType: 'slashing',
+    },
+  ],
   failureDamage: 'full',
   successDamage: 'half',
   failureConditions: [],
@@ -48,8 +67,8 @@ const sequenceConfig = (
   overrides: Partial<SequenceConfig> = {},
 ): SequenceConfig => ({
   initialState: {
-    player: { vex: false, sap: false },
-    enemy: { vex: false, sap: false },
+    player: { ...INITIAL_SEQUENCE_STATE.player },
+    enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
   },
   rounds: [
     {
@@ -123,10 +142,21 @@ describe('event calculations', () => {
       playerAttack({
         armorClass: 100,
         damagePools: [
-          { diceCount: 1, dieSides: 4 },
-          { diceCount: 2, dieSides: 6 },
+          {
+            id: 'damage-1',
+            diceCount: 1,
+            dieSides: 4,
+            modifier: 0,
+            damageType: 'slashing',
+          },
+          {
+            id: 'damage-2',
+            diceCount: 2,
+            dieSides: 6,
+            modifier: -3,
+            damageType: 'slashing',
+          },
         ],
-        damageModifier: -3,
       }),
     )
 
@@ -168,6 +198,29 @@ describe('event calculations', () => {
     expect(result.conditionApplications).toEqual([])
   })
 
+  it('supports saving throw roll modes and applies Cover only to Dexterity saves', () => {
+    expect(
+      calculateSavingThrow(playerSave({ rollMode: 'advantage' }))
+        .successProbability,
+    ).toBeCloseTo(0.6975)
+    expect(
+      calculateSavingThrow(playerSave({ rollMode: 'disadvantage' }))
+        .successProbability,
+    ).toBeCloseTo(0.2025)
+    expect(
+      calculateSavingThrow(playerSave({ rollMode: 'automatic-failure' }))
+        .successProbability,
+    ).toBe(0)
+    expect(
+      calculateSavingThrow(playerSave({ cover: 'half' })).successProbability,
+    ).toBeCloseTo(0.55)
+    expect(
+      calculateSavingThrow(
+        playerSave({ saveAbility: 'strength', cover: 'half' }),
+      ).successProbability,
+    ).toBeCloseTo(0.45)
+  })
+
   it('supports each damage consequence on either save branch', () => {
     expect(
       calculateSavingThrow(playerSave({ saveDc: 1, successDamage: 'none' }))
@@ -189,22 +242,40 @@ describe('event calculations', () => {
       calculateSavingThrow(
         playerSave({
           saveDc: 1,
-          damagePools: [{ diceCount: 1, dieSides: 4 }],
-          damageModifier: -2,
+          damagePools: [
+            {
+              id: 'damage-1',
+              diceCount: 1,
+              dieSides: 4,
+              modifier: -2,
+              damageType: 'slashing',
+            },
+          ],
         }),
       ).outcome.expectedDamage,
     ).toBeCloseTo(0.25)
   })
 
-  it('sums damage pools before applying the shared modifier', () => {
+  it('sums same-type damage pools with per-pool modifiers', () => {
     const result = calculateSavingThrow(
       playerSave({
         saveDc: 21,
         damagePools: [
-          { diceCount: 1, dieSides: 4 },
-          { diceCount: 1, dieSides: 6 },
+          {
+            id: 'damage-1',
+            diceCount: 1,
+            dieSides: 4,
+            modifier: 3,
+            damageType: 'slashing',
+          },
+          {
+            id: 'damage-2',
+            diceCount: 1,
+            dieSides: 6,
+            modifier: 0,
+            damageType: 'slashing',
+          },
         ],
-        damageModifier: 3,
       }),
     )
 
@@ -216,13 +287,183 @@ describe('event calculations', () => {
       playerSave({
         saveDc: 1,
         damagePools: [
-          { diceCount: 1, dieSides: 4 },
-          { diceCount: 1, dieSides: 4 },
+          {
+            id: 'damage-1',
+            diceCount: 1,
+            dieSides: 4,
+            modifier: 0,
+            damageType: 'slashing',
+          },
+          {
+            id: 'damage-2',
+            diceCount: 1,
+            dieSides: 4,
+            modifier: 0,
+            damageType: 'slashing',
+          },
         ],
       }),
     )
 
     expect(result.outcome.expectedDamage).toBeCloseTo(2.25)
+  })
+
+  it('applies typed damage defenses in immunity, resistance, vulnerability order', () => {
+    const base = calculateSequence(
+      sequenceConfig(
+        [
+          playerSave({
+            saveDc: 1,
+            successDamage: 'full',
+            damagePools: [
+              {
+                id: 'damage-1',
+                diceCount: 1,
+                dieSides: 4,
+                modifier: 0,
+                damageType: 'slashing',
+              },
+            ],
+          }),
+        ],
+        {
+          initialState: {
+            player: { ...INITIAL_SEQUENCE_STATE.player },
+            enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+          },
+        },
+      ),
+    )
+    expect(base.outcomes[0].expectedDamage).toBeCloseTo(2.5)
+
+    const resistant = calculateSequence(
+      sequenceConfig(
+        [
+          playerSave({
+            saveDc: 1,
+            successDamage: 'full',
+            damagePools: [
+              {
+                id: 'damage-1',
+                diceCount: 1,
+                dieSides: 4,
+                modifier: 0,
+                damageType: 'slashing',
+              },
+            ],
+          }),
+        ],
+        {
+          initialState: {
+            player: {
+              ...INITIAL_SEQUENCE_STATE.player,
+              damageResistances: ['slashing'],
+            },
+            enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+          },
+        },
+      ),
+    )
+    expect(resistant.outcomes[0].expectedDamage).toBeCloseTo(1)
+
+    const vulnerable = calculateSequence(
+      sequenceConfig(
+        [
+          playerSave({
+            saveDc: 1,
+            successDamage: 'full',
+            damagePools: [
+              {
+                id: 'damage-1',
+                diceCount: 1,
+                dieSides: 4,
+                modifier: 0,
+                damageType: 'slashing',
+              },
+            ],
+          }),
+        ],
+        {
+          initialState: {
+            player: {
+              ...INITIAL_SEQUENCE_STATE.player,
+              damageVulnerabilities: ['slashing'],
+            },
+            enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+          },
+        },
+      ),
+    )
+    expect(vulnerable.outcomes[0].expectedDamage).toBeCloseTo(5)
+
+    const immune = calculateSequence(
+      sequenceConfig(
+        [
+          playerSave({
+            saveDc: 1,
+            successDamage: 'full',
+            damagePools: [
+              {
+                id: 'damage-1',
+                diceCount: 1,
+                dieSides: 4,
+                modifier: 0,
+                damageType: 'slashing',
+              },
+            ],
+          }),
+        ],
+        {
+          initialState: {
+            player: {
+              ...INITIAL_SEQUENCE_STATE.player,
+              damageImmunities: ['slashing'],
+            },
+            enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+          },
+        },
+      ),
+    )
+    expect(immune.outcomes[0].expectedDamage).toBe(0)
+  })
+
+  it('combines same-type pools before resistance rounding', () => {
+    const result = calculateSequence(
+      sequenceConfig(
+        [
+          playerSave({
+            saveDc: 1,
+            successDamage: 'full',
+            damagePools: [
+              {
+                id: 'damage-1',
+                diceCount: 1,
+                dieSides: 4,
+                modifier: 0,
+                damageType: 'slashing',
+              },
+              {
+                id: 'damage-2',
+                diceCount: 1,
+                dieSides: 4,
+                modifier: 0,
+                damageType: 'slashing',
+              },
+            ],
+          }),
+        ],
+        {
+          initialState: {
+            player: {
+              ...INITIAL_SEQUENCE_STATE.player,
+              damageResistances: ['slashing'],
+            },
+            enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+          },
+        },
+      ),
+    )
+    expect(result.outcomes[0].expectedDamage).toBeCloseTo(2.25)
   })
 
   it('applies Vex on hit and uses it for the next attack against that target', () => {
@@ -408,8 +649,8 @@ describe('event calculations', () => {
     const result = calculateSequence(
       sequenceConfig([playerAttack()], {
         initialState: {
-          player: { vex: false, sap: false },
-          enemy: { vex: true, sap: false },
+          player: { ...INITIAL_SEQUENCE_STATE.player },
+          enemy: { ...INITIAL_SEQUENCE_STATE.enemy, vex: true },
         },
       }),
     )
@@ -419,13 +660,69 @@ describe('event calculations', () => {
     )
   })
 
+  it('spends Heroic Inspiration to reroll a failed controlling d20', () => {
+    const result = calculateSequence(
+      sequenceConfig(
+        [
+          playerAttack({ heroicInspiration: { type: 'd20-after-failure' } }),
+          playerAttack({ id: 'attack-2' }),
+        ],
+        {
+          initialState: {
+            player: {
+              ...INITIAL_SEQUENCE_STATE.player,
+              heroicInspiration: true,
+            },
+            enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+          },
+        },
+      ),
+    )
+    expect(result.eventResults['attack-1'].successProbability).toBeCloseTo(
+      0.6975,
+    )
+    expect(result.eventResults['attack-2'].successProbability).toBeCloseTo(0.45)
+  })
+
+  it('spends Heroic Inspiration to reroll a selected low damage die', () => {
+    const result = calculateSequence(
+      sequenceConfig(
+        [
+          playerAttack({
+            heroicInspiration: {
+              type: 'damage-pool-threshold',
+              damagePoolId: 'damage-1',
+              threshold: 1,
+            },
+          }),
+          playerAttack({ id: 'attack-2' }),
+        ],
+        {
+          initialState: {
+            player: {
+              ...INITIAL_SEQUENCE_STATE.player,
+              heroicInspiration: true,
+            },
+            enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+          },
+        },
+      ),
+    )
+    expect(result.eventResults['attack-1'].outcome.expectedDamage).toBeCloseTo(
+      2.466015625,
+    )
+    expect(result.eventResults['attack-2'].outcome.expectedDamage).toBeCloseTo(
+      2.25,
+    )
+  })
+
   it('traverses rounds, turns, and activities depth-first', () => {
     const first = playerAttack({ hitConditions: [{ type: 'vex' }] })
     const second = playerAttack({ id: 'attack-2' })
     const result = calculateSequence({
       initialState: {
-        player: { vex: false, sap: false },
-        enemy: { vex: false, sap: false },
+        player: { ...INITIAL_SEQUENCE_STATE.player },
+        enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
       },
       rounds: [
         {

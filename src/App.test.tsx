@@ -129,7 +129,7 @@ describe('App', () => {
     ).toEqual(['Player attack', 'Enemy attack'])
   })
 
-  it('adds, edits, and removes damage dice pools with one shared modifier', async () => {
+  it('adds, edits, and removes damage dice pools with independent modifiers', async () => {
     const user = userEvent.setup()
     render(<App />)
 
@@ -157,7 +157,7 @@ describe('App', () => {
 
     await user.type(diceCounts[1], '2')
     await user.selectOptions(dieSizes[1], '6')
-    const modifier = within(attack).getByLabelText(/^modifier$/i)
+    const modifier = within(attack).getAllByLabelText(/^modifier$/i)[1]
     await user.clear(modifier)
     await user.type(modifier, '3')
     expect(within(attack).getByText('7.1')).toBeInTheDocument()
@@ -166,7 +166,7 @@ describe('App', () => {
       within(attack).getByRole('button', { name: /remove damage pool 2/i }),
     )
     expect(within(attack).getAllByLabelText(/^dice$/i)).toHaveLength(1)
-    expect(within(attack).getByText('3.6')).toBeInTheDocument()
+    expect(within(attack).getByText('2.25')).toBeInTheDocument()
   })
 
   it('adds each event type with independent defaults', async () => {
@@ -204,6 +204,41 @@ describe('App', () => {
       screen.getByText(/expected damage against players/i, {
         selector: '.total-card span',
       }),
+    ).toBeInTheDocument()
+  })
+
+  it('exposes typed damage, save ability, Cover, and Inspiration controls', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await addEvent(user, 'Player saving throw')
+
+    const save = screen.getByRole('article', { name: /player saving throw/i })
+    await user.selectOptions(
+      within(save).getByLabelText(/save ability/i),
+      'strength',
+    )
+    await user.selectOptions(
+      within(save).getByLabelText(/^roll mode$/i),
+      'automatic-failure',
+    )
+    await user.selectOptions(within(save).getByLabelText(/^cover$/i), 'half')
+    await user.selectOptions(
+      within(save).getByLabelText(/damage type/i),
+      'fire',
+    )
+    await user.selectOptions(
+      within(save).getByLabelText(/reroll policy/i),
+      'damage-pool-threshold',
+    )
+
+    expect(within(save).getByLabelText(/save ability/i)).toHaveValue('strength')
+    expect(within(save).getByLabelText(/^roll mode$/i)).toHaveValue(
+      'automatic-failure',
+    )
+    expect(within(save).getByLabelText(/^cover$/i)).toHaveValue('half')
+    expect(within(save).getByLabelText(/damage type/i)).toHaveValue('fire')
+    expect(
+      within(save).getByLabelText(/reroll at or below/i),
     ).toBeInTheDocument()
   })
 

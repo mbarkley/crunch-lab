@@ -12,14 +12,19 @@ import {
 } from 'lucide-react'
 import { type DragEvent, useRef, useState } from 'react'
 import type {
+  Ability,
   AttackRollMode,
   ConditionConfig,
   ConditionTarget,
   ConditionType,
+  Cover,
   DamageConsequence,
+  DamageType,
   EventConfig,
   EventResult,
+  HeroicInspirationPolicy,
   Outcome,
+  SavingThrowRollMode,
 } from './probability/event'
 import {
   calculateEvent,
@@ -45,6 +50,41 @@ const ATTACK_ROLL_MODES: readonly {
   { value: 'advantage', label: 'Advantage' },
   { value: 'disadvantage', label: 'Disadvantage' },
 ]
+const SAVE_ROLL_MODES: readonly {
+  value: SavingThrowRollMode
+  label: string
+}[] = [
+  ...ATTACK_ROLL_MODES,
+  { value: 'automatic-failure', label: 'Automatic failure' },
+]
+const ABILITIES: readonly { value: Ability; label: string }[] = [
+  { value: 'strength', label: 'Strength' },
+  { value: 'dexterity', label: 'Dexterity' },
+  { value: 'constitution', label: 'Constitution' },
+  { value: 'intelligence', label: 'Intelligence' },
+  { value: 'wisdom', label: 'Wisdom' },
+  { value: 'charisma', label: 'Charisma' },
+]
+const COVER_OPTIONS: readonly { value: Cover; label: string }[] = [
+  { value: 'none', label: 'None' },
+  { value: 'half', label: 'Half (+2)' },
+  { value: 'three-quarters', label: 'Three-quarters (+5)' },
+]
+const DAMAGE_TYPES: readonly { value: DamageType; label: string }[] = [
+  { value: 'acid', label: 'Acid' },
+  { value: 'bludgeoning', label: 'Bludgeoning' },
+  { value: 'cold', label: 'Cold' },
+  { value: 'fire', label: 'Fire' },
+  { value: 'force', label: 'Force' },
+  { value: 'lightning', label: 'Lightning' },
+  { value: 'necrotic', label: 'Necrotic' },
+  { value: 'piercing', label: 'Piercing' },
+  { value: 'poison', label: 'Poison' },
+  { value: 'psychic', label: 'Psychic' },
+  { value: 'radiant', label: 'Radiant' },
+  { value: 'slashing', label: 'Slashing' },
+  { value: 'thunder', label: 'Thunder' },
+]
 const CONDITION_TYPES: readonly ConditionType[] = ['vex', 'sap']
 const CONDITION_LABELS: Record<ConditionType, string> = {
   vex: 'Vex',
@@ -58,27 +98,40 @@ interface DamagePoolDraft {
   readonly id: string
   readonly diceCount: string
   readonly dieSides: string
+  readonly modifier: string
+  readonly damageType: DamageType
 }
 
 interface DamageDraft {
   readonly damagePools: readonly DamagePoolDraft[]
-  readonly damageModifier: string
 }
 
-interface AttackDraft extends DamageDraft {
+type InspirationMode = 'none' | HeroicInspirationPolicy['type']
+
+interface InspirationDraft {
+  readonly heroicInspirationMode: InspirationMode
+  readonly heroicInspirationPoolId: string
+  readonly heroicInspirationThreshold: string
+}
+
+interface AttackDraft extends DamageDraft, InspirationDraft {
   readonly id: string
   readonly type: 'player-attack' | 'enemy-attack'
   readonly armorClass: string
   readonly attackModifier: string
   readonly rollMode: AttackRollMode
+  readonly cover: Cover
   readonly hitConditions: readonly ConditionConfig[]
 }
 
-interface SavingThrowDraft extends DamageDraft {
+interface SavingThrowDraft extends DamageDraft, InspirationDraft {
   readonly id: string
   readonly type: 'player-saving-throw' | 'enemy-saving-throw'
   readonly saveDc: string
   readonly saveModifier: string
+  readonly saveAbility: Ability
+  readonly rollMode: SavingThrowRollMode
+  readonly cover: Cover
   readonly failureDamage: DamageConsequence
   readonly successDamage: DamageConsequence
   readonly failureConditions: readonly ConditionConfig[]
@@ -87,7 +140,6 @@ interface SavingThrowDraft extends DamageDraft {
 
 type EventDraft = AttackDraft | SavingThrowDraft
 type EventField =
-  | 'damageModifier'
   | 'armorClass'
   | 'attackModifier'
   | 'saveDc'
@@ -98,21 +150,27 @@ type EventField =
   | 'hitConditions'
   | 'failureConditions'
   | 'successConditions'
+  | 'saveAbility'
+  | 'cover'
+  | 'heroicInspirationMode'
+  | 'heroicInspirationPoolId'
+  | 'heroicInspirationThreshold'
 type EventFieldValue = string | readonly ConditionConfig[]
-type DamagePoolField = 'diceCount' | 'dieSides'
+type DamagePoolField = 'diceCount' | 'dieSides' | 'modifier' | 'damageType'
 
 interface DamagePoolErrors {
   diceCount?: string
   dieSides?: string
+  modifier?: string
 }
 
 interface EventErrors {
   damagePools?: Readonly<Record<string, DamagePoolErrors>>
-  damageModifier?: string
   armorClass?: string
   attackModifier?: string
   saveDc?: string
   saveModifier?: string
+  heroicInspiration?: string
 }
 
 interface EventEvaluation {
@@ -128,9 +186,18 @@ function createDefaultDamage(eventId: string): DamageDraft {
         id: eventId + '-damage-0',
         diceCount: '1',
         dieSides: '8',
+        modifier: '0',
+        damageType: 'slashing',
       },
     ],
-    damageModifier: '0',
+  }
+}
+
+function createDefaultInspiration(eventId: string): InspirationDraft {
+  return {
+    heroicInspirationMode: 'none',
+    heroicInspirationPoolId: eventId + '-damage-0',
+    heroicInspirationThreshold: '1',
   }
 }
 
@@ -157,8 +224,10 @@ function createEvent(type: EventType, id: string): EventDraft {
       armorClass: '12',
       attackModifier: '0',
       rollMode: 'normal',
+      cover: 'none',
       hitConditions: [],
       ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
     }
   }
   return {
@@ -166,11 +235,15 @@ function createEvent(type: EventType, id: string): EventDraft {
     type,
     saveDc: '12',
     saveModifier: '0',
+    saveAbility: 'dexterity',
+    rollMode: 'normal',
+    cover: 'none',
     failureDamage: 'full',
     successDamage: 'half',
     failureConditions: [],
     successConditions: [],
     ...createDefaultDamage(id),
+    ...createDefaultInspiration(id),
   }
 }
 
@@ -179,13 +252,18 @@ function duplicateEvent(
   id: string,
   createDamagePoolId: () => string,
 ): EventDraft {
+  const poolIds = new Map<string, string>()
+  const damagePools = event.damagePools.map((pool) => {
+    const nextId = createDamagePoolId()
+    poolIds.set(pool.id, nextId)
+    return { ...pool, id: nextId }
+  })
   return {
     ...event,
     id,
-    damagePools: event.damagePools.map((pool) => ({
-      ...pool,
-      id: createDamagePoolId(),
-    })),
+    damagePools,
+    heroicInspirationPoolId:
+      poolIds.get(event.heroicInspirationPoolId) ?? damagePools[0].id,
     ...(isAttackDraft(event)
       ? {
           hitConditions: event.hitConditions.map((condition) => ({
@@ -213,14 +291,40 @@ function isAttackDraft(draft: EventDraft): draft is AttackDraft {
   return draft.type === 'player-attack' || draft.type === 'enemy-attack'
 }
 
+function inspirationPolicyFor(
+  draft: EventDraft,
+  errors: EventErrors,
+): HeroicInspirationPolicy | undefined {
+  if (draft.heroicInspirationMode === 'none') return undefined
+  if (draft.heroicInspirationMode === 'd20-after-failure') {
+    return { type: 'd20-after-failure' }
+  }
+  const threshold = parseInteger(draft.heroicInspirationThreshold)
+  if (
+    threshold === undefined ||
+    threshold < 1 ||
+    threshold > 20 ||
+    !draft.damagePools.some((pool) => pool.id === draft.heroicInspirationPoolId)
+  ) {
+    errors.heroicInspiration =
+      'Choose a damage pool and a threshold from 1 through 20.'
+    return undefined
+  }
+  return {
+    type: 'damage-pool-threshold',
+    damagePoolId: draft.heroicInspirationPoolId,
+    threshold,
+  }
+}
+
 function evaluateEvent(draft: EventDraft): EventEvaluation {
-  const damageModifier = parseInteger(draft.damageModifier)
   const damagePoolErrors: Record<string, DamagePoolErrors> = {}
   const errors: EventErrors = {}
 
   for (const pool of draft.damagePools) {
     const diceCount = parseInteger(pool.diceCount)
     const dieSides = parseInteger(pool.dieSides)
+    const modifier = parseInteger(pool.modifier)
     const poolErrors: DamagePoolErrors = {}
     if (diceCount === undefined || diceCount < 1) {
       poolErrors.diceCount = 'Enter a whole number of at least 1.'
@@ -231,6 +335,9 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
     ) {
       poolErrors.dieSides = 'Choose an available die size.'
     }
+    if (modifier === undefined) {
+      poolErrors.modifier = 'Enter a whole number.'
+    }
     if (Object.keys(poolErrors).length > 0) {
       damagePoolErrors[pool.id] = poolErrors
     }
@@ -238,13 +345,13 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
   if (Object.keys(damagePoolErrors).length > 0) {
     errors.damagePools = damagePoolErrors
   }
-  if (damageModifier === undefined) {
-    errors.damageModifier = 'Enter a whole number.'
-  }
 
   const damagePools = draft.damagePools.map((pool) => ({
+    id: pool.id,
     diceCount: parseInteger(pool.diceCount)!,
     dieSides: parseInteger(pool.dieSides)!,
+    modifier: parseInteger(pool.modifier)!,
+    damageType: pool.damageType,
   }))
 
   if (isAttackDraft(draft)) {
@@ -256,6 +363,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
     if (attackModifier === undefined) {
       errors.attackModifier = 'Enter a whole number.'
     }
+    const heroicInspiration = inspirationPolicyFor(draft, errors)
     if (Object.keys(errors).length > 0) return { errors }
 
     const config: EventConfig = {
@@ -264,9 +372,10 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       armorClass: armorClass!,
       attackModifier: attackModifier!,
       rollMode: draft.rollMode,
+      cover: draft.cover,
       hitConditions: draft.hitConditions,
       damagePools,
-      damageModifier: damageModifier!,
+      heroicInspiration,
     }
     return { errors, config, result: calculateEvent(config) }
   }
@@ -279,6 +388,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
   if (saveModifier === undefined) {
     errors.saveModifier = 'Enter a whole number.'
   }
+  const heroicInspiration = inspirationPolicyFor(draft, errors)
   if (Object.keys(errors).length > 0) return { errors }
 
   const config: EventConfig = {
@@ -286,12 +396,15 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
     type: draft.type,
     saveDc: saveDc!,
     saveModifier: saveModifier!,
+    saveAbility: draft.saveAbility,
+    rollMode: draft.rollMode,
+    cover: draft.cover,
     damagePools,
-    damageModifier: damageModifier!,
     failureDamage: draft.failureDamage,
     successDamage: draft.successDamage,
     failureConditions: draft.failureConditions,
     successConditions: draft.successConditions,
+    heroicInspiration,
   }
   return { errors, config, result: calculateEvent(config) }
 }
@@ -311,7 +424,6 @@ interface FieldProps {
 function DamageFields({
   event,
   errors,
-  update,
   updatePool,
   addPool,
   removePool,
@@ -390,6 +502,53 @@ function DamageFields({
                     ))}
                   </select>
                 </div>
+                <div className="field">
+                  <label htmlFor={prefix + '-' + pool.id + '-modifier'}>
+                    Modifier
+                  </label>
+                  <input
+                    id={prefix + '-' + pool.id + '-modifier'}
+                    type="number"
+                    inputMode="numeric"
+                    step="1"
+                    value={pool.modifier}
+                    aria-invalid={Boolean(poolErrors?.modifier)}
+                    aria-describedby={
+                      poolErrors?.modifier
+                        ? prefix + '-' + pool.id + '-modifier-error'
+                        : undefined
+                    }
+                    onChange={(change) =>
+                      updatePool(pool.id, 'modifier', change.target.value)
+                    }
+                  />
+                  {poolErrors?.modifier && (
+                    <span
+                      className="field-error"
+                      id={prefix + '-' + pool.id + '-modifier-error'}
+                    >
+                      {poolErrors.modifier}
+                    </span>
+                  )}
+                </div>
+                <div className="field">
+                  <label htmlFor={prefix + '-' + pool.id + '-damage-type'}>
+                    Damage type
+                  </label>
+                  <select
+                    id={prefix + '-' + pool.id + '-damage-type'}
+                    value={pool.damageType}
+                    onChange={(change) =>
+                      updatePool(pool.id, 'damageType', change.target.value)
+                    }
+                  >
+                    {DAMAGE_TYPES.map((type) => (
+                      <option key={type.value} value={type.value}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <button
                 className="inline-icon-button"
@@ -408,35 +567,65 @@ function DamageFields({
         <Plus aria-hidden="true" size={16} />
         Add dice pool
       </button>
-      <div className="damage-modifier-row">
-        <span className="operator" aria-hidden="true">
-          +
-        </span>
+    </fieldset>
+  )
+}
+
+function InspirationFields({ event, update }: FieldProps) {
+  const thresholdId = `${event.id}-inspiration-threshold`
+  const poolId = `${event.id}-inspiration-pool`
+  return (
+    <fieldset className="roll-section inspiration-section">
+      <legend>Heroic Inspiration</legend>
+      <div className="roll-fields">
         <div className="field">
-          <label htmlFor={prefix + '-damage-modifier'}>Modifier</label>
-          <input
-            id={prefix + '-damage-modifier'}
-            type="number"
-            inputMode="numeric"
-            step="1"
-            value={event.damageModifier}
-            aria-invalid={Boolean(errors.damageModifier)}
-            aria-describedby={
-              errors.damageModifier
-                ? prefix + '-damage-modifier-error'
-                : undefined
+          <label htmlFor={`${event.id}-inspiration-mode`}>Reroll policy</label>
+          <select
+            id={`${event.id}-inspiration-mode`}
+            value={event.heroicInspirationMode}
+            onChange={(change) =>
+              update('heroicInspirationMode', change.target.value)
             }
-            onChange={(change) => update('damageModifier', change.target.value)}
-          />
-          {errors.damageModifier && (
-            <span
-              className="field-error"
-              id={prefix + '-damage-modifier-error'}
-            >
-              {errors.damageModifier}
-            </span>
-          )}
+          >
+            <option value="none">Do not spend</option>
+            <option value="d20-after-failure">Failed d20</option>
+            <option value="damage-pool-threshold">Damage die threshold</option>
+          </select>
         </div>
+        {event.heroicInspirationMode === 'damage-pool-threshold' && (
+          <>
+            <div className="field">
+              <label htmlFor={poolId}>Damage pool</label>
+              <select
+                id={poolId}
+                value={event.heroicInspirationPoolId}
+                onChange={(change) =>
+                  update('heroicInspirationPoolId', change.target.value)
+                }
+              >
+                {event.damagePools.map((pool, index) => (
+                  <option key={pool.id} value={pool.id}>
+                    Pool {index + 1}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor={thresholdId}>Reroll at or below</label>
+              <input
+                id={thresholdId}
+                type="number"
+                min="1"
+                max="20"
+                step="1"
+                value={event.heroicInspirationThreshold}
+                onChange={(change) =>
+                  update('heroicInspirationThreshold', change.target.value)
+                }
+              />
+            </div>
+          </>
+        )}
       </div>
     </fieldset>
   )
@@ -511,6 +700,20 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
             ))}
           </select>
         </div>
+        <div className="field">
+          <label htmlFor={`${event.id}-cover`}>Cover</label>
+          <select
+            id={`${event.id}-cover`}
+            value={event.cover}
+            onChange={(change) => update('cover', change.target.value)}
+          >
+            {COVER_OPTIONS.map((cover) => (
+              <option key={cover.value} value={cover.value}>
+                {cover.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
     </fieldset>
   )
@@ -574,6 +777,48 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
                 {errors.saveModifier}
               </span>
             )}
+          </div>
+          <div className="field">
+            <label htmlFor={`${event.id}-save-ability`}>Save ability</label>
+            <select
+              id={`${event.id}-save-ability`}
+              value={event.saveAbility}
+              onChange={(change) => update('saveAbility', change.target.value)}
+            >
+              {ABILITIES.map((ability) => (
+                <option key={ability.value} value={ability.value}>
+                  {ability.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor={`${event.id}-save-roll-mode`}>Roll mode</label>
+            <select
+              id={`${event.id}-save-roll-mode`}
+              value={event.rollMode}
+              onChange={(change) => update('rollMode', change.target.value)}
+            >
+              {SAVE_ROLL_MODES.map((mode) => (
+                <option key={mode.value} value={mode.value}>
+                  {mode.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor={`${event.id}-save-cover`}>Cover</label>
+            <select
+              id={`${event.id}-save-cover`}
+              value={event.cover}
+              onChange={(change) => update('cover', change.target.value)}
+            >
+              {COVER_OPTIONS.map((cover) => (
+                <option key={cover.value} value={cover.value}>
+                  {cover.label}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </fieldset>
@@ -873,7 +1118,13 @@ function App() {
               ...event,
               damagePools: [
                 ...event.damagePools,
-                { id, diceCount: '1', dieSides: '8' },
+                {
+                  id,
+                  diceCount: '1',
+                  dieSides: '8',
+                  modifier: '0',
+                  damageType: 'slashing',
+                },
               ],
             }
           : event,
@@ -1171,6 +1422,13 @@ function App() {
                       addPool={() => addDamagePool(event.id)}
                       removePool={(poolId) =>
                         removeDamagePool(event.id, poolId)
+                      }
+                    />
+                    <InspirationFields
+                      event={event}
+                      errors={evaluation.errors}
+                      update={(field, value) =>
+                        updateEvent(event.id, field, value)
                       }
                     />
                     <ConditionFields
