@@ -175,6 +175,7 @@
 }
 
 .attack-card {
+  container-type: inline-size;
   overflow: hidden;
   border: 1px solid #dbe1e7;
   border-radius: 15px;
@@ -1245,6 +1246,17 @@ input[aria-invalid='true'] {
 }
 
 @media (max-width: 920px) {
+  .attack-body {
+    grid-template-columns: 1fr;
+  }
+
+  .attack-body .damage-section {
+    border-top: 1px solid #e2e6ea;
+    border-left: 0;
+  }
+}
+
+@container (max-width: 760px) {
   .attack-body {
     grid-template-columns: 1fr;
   }
