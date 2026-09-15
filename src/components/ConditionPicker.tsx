@@ -15,6 +15,8 @@ export interface ConditionPickerProps<Value extends string = string> {
   readonly onChange: (selected: readonly Value[]) => void
   readonly addLabel?: string
   readonly emptyLabel?: string
+  readonly closeOnSelect?: boolean
+  readonly removeLabel?: (option: ConditionPickerOption<Value>) => string
 }
 
 function fuzzyMatches(label: string, query: string) {
@@ -39,6 +41,8 @@ export function ConditionPicker<Value extends string>({
   onChange,
   addLabel = 'Add condition',
   emptyLabel = 'No matching conditions.',
+  closeOnSelect = false,
+  removeLabel,
 }: ConditionPickerProps<Value>) {
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -81,6 +85,10 @@ export function ConditionPicker<Value extends string>({
 
   function addOption(value: Value) {
     if (!selectedSet.has(value)) onChange([...selected, value])
+    if (closeOnSelect) {
+      closePicker()
+      return
+    }
     setQuery('')
     searchRef.current?.focus()
   }
@@ -148,7 +156,10 @@ export function ConditionPicker<Value extends string>({
               <span>{option.label}</span>
               <button
                 type="button"
-                aria-label={`Remove ${option.label} from ${label}`}
+                aria-label={
+                  removeLabel?.(option) ??
+                  `Remove ${option.label} from ${label}`
+                }
                 onClick={() => removeOption(value)}
               >
                 <X aria-hidden="true" size={13} strokeWidth={2.4} />
