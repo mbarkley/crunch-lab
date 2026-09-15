@@ -32,6 +32,7 @@ export type TurnBoundary = 'start' | 'end'
 export interface RepeatedSaveTrigger {
   readonly ability: string
   readonly dc: number
+  readonly saveModifier: number
 }
 
 /** Typed damage dealt by a persistent condition at one of its duration boundaries. */

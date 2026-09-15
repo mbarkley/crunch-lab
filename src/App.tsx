@@ -35,6 +35,7 @@ import type {
   HeroicInspirationPolicy,
   Outcome,
   PersistentConditionType,
+  TurnBoundary,
   SavingThrowRollMode,
 } from './probability/event'
 import {
@@ -133,6 +134,7 @@ interface StateDraft {
   readonly vex: boolean
   readonly sap: boolean
   readonly helped: boolean
+  readonly helpSource: Combatant | null
   readonly dodging: boolean
   readonly heroicInspiration: boolean
   readonly damageImmunities: readonly DamageType[]
@@ -1888,6 +1890,8 @@ function createStateDraft(combatant: Combatant): StateDraft {
     vex: state.vex,
     sap: state.sap,
     helped: state.helped,
+    helpSource:
+      state.helpSource ?? (combatant === 'player' ? 'enemy' : 'player'),
     dodging: state.dodging,
     heroicInspiration: state.heroicInspiration,
     damageImmunities: [...state.damageImmunities],
@@ -1923,6 +1927,7 @@ function stateConfigForDraft(draft: StateDraft): {
       vex: draft.vex,
       sap: draft.sap,
       helped: draft.helped,
+      helpSource: draft.helped ? draft.helpSource : null,
       dodging: draft.dodging,
       heroicInspiration: draft.heroicInspiration,
       damageImmunities: draft.damageImmunities,
@@ -1936,6 +1941,317 @@ function stateConfigForDraft(draft: StateDraft): {
         : null,
     },
   }
+}
+
+function ConditionInstanceEditor({
+  condition,
+  onChange,
+}: {
+  readonly condition: ConditionInstance
+  readonly onChange: (change: Partial<ConditionInstance>) => void
+}) {
+  const duration = condition.duration
+  const trigger = duration?.repeatedSave
+    ? 'repeated-save'
+    : duration?.ongoingDamage
+      ? 'ongoing-damage'
+      : 'none'
+  const updateDuration = (
+    change: Partial<NonNullable<ConditionInstance['duration']>>,
+  ) => {
+    const next = duration ?? {
+      remainingTurns: 1,
+      boundary: 'end' as TurnBoundary,
+      turnOwner: condition.recipient,
+    }
+    onChange({ duration: { ...next, ...change } })
+  }
+  const updateTrigger = (value: string) => {
+    if (value === 'none') {
+      if (!duration) return
+      onChange({
+        duration: {
+          remainingTurns: duration.remainingTurns,
+          boundary: duration.boundary,
+          turnOwner: duration.turnOwner,
+        },
+      })
+      return
+    }
+    if (value === 'repeated-save') {
+      updateDuration({
+        ongoingDamage: undefined,
+        repeatedSave: duration?.repeatedSave ?? {
+          ability: 'constitution',
+          dc: 12,
+          saveModifier: 0,
+        },
+      })
+      return
+    }
+    updateDuration({
+      repeatedSave: undefined,
+      ongoingDamage: duration?.ongoingDamage ?? {
+        damageType: 'fire',
+        diceCount: 1,
+        dieSides: 6,
+        modifier: 0,
+      },
+    })
+  }
+  return (
+    <div
+      className="condition-instance-editor"
+      aria-label={`${CONDITION_LABELS[condition.type]} condition details`}
+    >
+      <div className="condition-instance-fields">
+        <div className="field">
+          <label htmlFor={`${condition.id}-source`}>Source</label>
+          <select
+            id={`${condition.id}-source`}
+            value={condition.source}
+            onChange={(event) =>
+              onChange({ source: event.target.value as Combatant })
+            }
+          >
+            <option value="player">Player</option>
+            <option value="enemy">Enemy</option>
+          </select>
+        </div>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={duration !== undefined}
+            aria-label={`${CONDITION_LABELS[condition.type]} has duration`}
+            onChange={(event) =>
+              event.target.checked
+                ? updateDuration({})
+                : onChange({ duration: undefined })
+            }
+          />
+          Has duration
+        </label>
+        {duration && (
+          <>
+            <div className="field">
+              <label htmlFor={`${condition.id}-duration`}>Duration turns</label>
+              <input
+                id={`${condition.id}-duration`}
+                type="number"
+                min="1"
+                step="1"
+                value={duration.remainingTurns}
+                onChange={(event) =>
+                  updateDuration({ remainingTurns: Number(event.target.value) })
+                }
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={`${condition.id}-turn-owner`}>
+                Counted turn owner
+              </label>
+              <select
+                id={`${condition.id}-turn-owner`}
+                value={duration.turnOwner}
+                onChange={(event) =>
+                  updateDuration({ turnOwner: event.target.value as Combatant })
+                }
+              >
+                <option value="player">Player</option>
+                <option value="enemy">Enemy</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor={`${condition.id}-boundary`}>
+                Expiry boundary
+              </label>
+              <select
+                id={`${condition.id}-boundary`}
+                value={duration.boundary}
+                onChange={(event) =>
+                  updateDuration({
+                    boundary: event.target.value as TurnBoundary,
+                  })
+                }
+              >
+                <option value="start">Start of turn</option>
+                <option value="end">End of turn</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor={`${condition.id}-trigger`}>
+                Boundary trigger
+              </label>
+              <select
+                id={`${condition.id}-trigger`}
+                value={trigger}
+                onChange={(event) => updateTrigger(event.target.value)}
+              >
+                <option value="none">None</option>
+                <option value="repeated-save">Repeated save</option>
+                <option value="ongoing-damage">Ongoing damage</option>
+              </select>
+            </div>
+            {trigger === 'repeated-save' && duration.repeatedSave && (
+              <>
+                <div className="field">
+                  <label htmlFor={`${condition.id}-save-ability`}>
+                    Repeated save ability
+                  </label>
+                  <select
+                    id={`${condition.id}-save-ability`}
+                    value={duration.repeatedSave.ability}
+                    onChange={(event) =>
+                      updateDuration({
+                        repeatedSave: {
+                          ...duration.repeatedSave!,
+                          ability: event.target.value,
+                        },
+                      })
+                    }
+                  >
+                    {ABILITIES.map((ability) => (
+                      <option key={ability.value} value={ability.value}>
+                        {ability.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor={`${condition.id}-save-dc`}>
+                    Repeated save DC
+                  </label>
+                  <input
+                    id={`${condition.id}-save-dc`}
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={duration.repeatedSave.dc}
+                    onChange={(event) =>
+                      updateDuration({
+                        repeatedSave: {
+                          ...duration.repeatedSave!,
+                          dc: Number(event.target.value),
+                        },
+                      })
+                    }
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor={`${condition.id}-save-modifier`}>
+                    Repeated save modifier
+                  </label>
+                  <input
+                    id={`${condition.id}-save-modifier`}
+                    type="number"
+                    step="1"
+                    value={duration.repeatedSave.saveModifier}
+                    onChange={(event) =>
+                      updateDuration({
+                        repeatedSave: {
+                          ...duration.repeatedSave!,
+                          saveModifier: Number(event.target.value),
+                        },
+                      })
+                    }
+                  />
+                </div>
+              </>
+            )}
+            {trigger === 'ongoing-damage' && duration.ongoingDamage && (
+              <>
+                <div className="field">
+                  <label htmlFor={`${condition.id}-ongoing-type`}>
+                    Ongoing damage type
+                  </label>
+                  <select
+                    id={`${condition.id}-ongoing-type`}
+                    value={duration.ongoingDamage.damageType}
+                    onChange={(event) =>
+                      updateDuration({
+                        ongoingDamage: {
+                          ...duration.ongoingDamage!,
+                          damageType: event.target.value,
+                        },
+                      })
+                    }
+                  >
+                    {DAMAGE_TYPES.map((type) => (
+                      <option key={type.value} value={type.value}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor={`${condition.id}-ongoing-dice`}>
+                    Ongoing damage dice
+                  </label>
+                  <input
+                    id={`${condition.id}-ongoing-dice`}
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={duration.ongoingDamage.diceCount}
+                    onChange={(event) =>
+                      updateDuration({
+                        ongoingDamage: {
+                          ...duration.ongoingDamage!,
+                          diceCount: Number(event.target.value),
+                        },
+                      })
+                    }
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor={`${condition.id}-ongoing-sides`}>
+                    Ongoing die size
+                  </label>
+                  <select
+                    id={`${condition.id}-ongoing-sides`}
+                    value={duration.ongoingDamage.dieSides}
+                    onChange={(event) =>
+                      updateDuration({
+                        ongoingDamage: {
+                          ...duration.ongoingDamage!,
+                          dieSides: Number(event.target.value),
+                        },
+                      })
+                    }
+                  >
+                    {DAMAGE_DIE_SIDES.map((sides) => (
+                      <option key={sides} value={sides}>
+                        {sides}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor={`${condition.id}-ongoing-modifier`}>
+                    Ongoing damage modifier
+                  </label>
+                  <input
+                    id={`${condition.id}-ongoing-modifier`}
+                    type="number"
+                    step="1"
+                    value={duration.ongoingDamage.modifier}
+                    onChange={(event) =>
+                      updateDuration({
+                        ongoingDamage: {
+                          ...duration.ongoingDamage!,
+                          modifier: Number(event.target.value),
+                        },
+                      })
+                    }
+                  />
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function CombatantStatePanel({
@@ -1966,6 +2282,14 @@ function CombatantStatePanel({
             source: combatant,
             recipient: combatant,
           },
+      ),
+    })
+  }
+
+  function updateCondition(id: string, change: Partial<ConditionInstance>) {
+    onChange({
+      conditions: state.conditions.map((condition) =>
+        condition.id === id ? { ...condition, ...change } : condition,
       ),
     })
   }
@@ -2010,6 +2334,24 @@ function CombatantStatePanel({
           />
           Help
         </label>
+        {state.helped && (
+          <div className="field">
+            <label htmlFor={`${stateId}-help-source`}>Help source</label>
+            <select
+              id={`${stateId}-help-source`}
+              value={
+                state.helpSource ??
+                (combatant === 'player' ? 'enemy' : 'player')
+              }
+              onChange={(event) =>
+                onChange({ helpSource: event.target.value as Combatant })
+              }
+            >
+              <option value="player">Player</option>
+              <option value="enemy">Enemy</option>
+            </select>
+          </div>
+        )}
         <label className="checkbox-field">
           <input
             type="checkbox"
@@ -2092,6 +2434,18 @@ function CombatantStatePanel({
           selected={selectedConditions}
           onChange={updateConditions}
         />
+        <div
+          className="condition-instance-list"
+          aria-label={`${label} condition details`}
+        >
+          {state.conditions.map((condition) => (
+            <ConditionInstanceEditor
+              key={condition.id}
+              condition={condition}
+              onChange={(change) => updateCondition(condition.id, change)}
+            />
+          ))}
+        </div>
         <ConditionPicker
           id={`${stateId}-condition-immunities`}
           label="Condition immunities"

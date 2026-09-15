@@ -281,6 +281,7 @@ export interface CombatantState {
   readonly exhaustion: ExhaustionLevel
   readonly concentration: ConcentrationState | null
   readonly helped: boolean
+  readonly helpSource: Combatant | null
   readonly dodging: boolean
 }
 
@@ -461,6 +462,7 @@ export const INITIAL_SEQUENCE_STATE: SequenceState = {
     exhaustion: 0,
     concentration: null,
     helped: false,
+    helpSource: null,
     dodging: false,
   },
   enemy: {
@@ -475,6 +477,7 @@ export const INITIAL_SEQUENCE_STATE: SequenceState = {
     exhaustion: 0,
     concentration: null,
     helped: false,
+    helpSource: null,
     dodging: false,
   },
 }
@@ -533,6 +536,7 @@ function validateConditionDuration(duration: ConditionInstance['duration']) {
       throw new RangeError('Repeated save ability is invalid')
     }
     assertInteger(duration.repeatedSave.dc, 'Repeated save DC', 1)
+    assertInteger(duration.repeatedSave.saveModifier, 'Repeated save modifier')
   }
   if (duration.ongoingDamage !== undefined) {
     if (duration.repeatedSave !== undefined) {
@@ -639,6 +643,16 @@ function validateCombatantState(
   }
   if (typeof state.helped !== 'boolean' || typeof state.dodging !== 'boolean') {
     throw new RangeError('Helped and dodging state must be boolean')
+  }
+  if (
+    state.helpSource !== null &&
+    state.helpSource !== 'player' &&
+    state.helpSource !== 'enemy'
+  ) {
+    throw new RangeError('Help source must be player or enemy')
+  }
+  if (state.helped && state.helpSource === null) {
+    throw new RangeError('Helped state must include a help source')
   }
   assertInteger(state.exhaustion, 'Exhaustion level', 0)
   if (state.exhaustion > 6) {
@@ -1283,6 +1297,7 @@ function stateKey(state: SequenceState) {
         [...value.conditionImmunities].sort().join(','),
         value.concentration?.constitutionModifier ?? '',
         value.helped,
+        value.helpSource ?? '',
         value.dodging,
         value.conditions
           .map(
@@ -1370,7 +1385,12 @@ function attackTransitions(
     config.heroicInspiration?.type === 'd20-after-failure'
   const consumedState: SequenceState = {
     ...state,
-    [attacker]: { ...state[attacker], sap: false, helped: false },
+    [attacker]: {
+      ...state[attacker],
+      sap: false,
+      helped: false,
+      helpSource: null,
+    },
     [target]: { ...state[target], vex: false },
   }
 
@@ -1812,7 +1832,11 @@ function stateEventTransitions(
       assertCombatant(config.target, 'Help target')
       next = {
         ...state,
-        [config.target]: { ...state[config.target], helped: true },
+        [config.target]: {
+          ...state[config.target],
+          helped: true,
+          helpSource: config.owner,
+        },
       }
       break
     case 'dodge':
@@ -2204,7 +2228,10 @@ function boundaryConditionTransitions(
         const roll = selectedD20(values, mode)
         const success =
           !effects.automaticFailure &&
-          roll - state[target].exhaustion * 2 >= duration.repeatedSave!.dc
+          roll +
+            duration.repeatedSave!.saveModifier -
+            state[target].exhaustion * 2 >=
+            duration.repeatedSave!.dc
         const afterDuration = success
           ? removeConditionInstance(state, target, condition.id)
           : decrementCondition(state, target, condition.id)
@@ -2287,9 +2314,16 @@ function boundaryTransitions(
       ...initial,
       [turn.owner]: {
         ...initial[turn.owner],
-        helped: false,
         dodging: false,
       },
+    }
+    for (const target of ['player', 'enemy'] as const) {
+      if (initial[target].helped && initial[target].helpSource === turn.owner) {
+        initial = {
+          ...initial,
+          [target]: { ...initial[target], helped: false, helpSource: null },
+        }
+      }
     }
   }
   for (const combatant of ['player', 'enemy'] as const) {

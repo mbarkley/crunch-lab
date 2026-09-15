@@ -117,7 +117,11 @@ describe('timed conditions and persistent state', () => {
               remainingTurns: 1,
               boundary: 'start' as const,
               turnOwner: 'player' as const,
-              repeatedSave: { ability: 'constitution', dc: 1 },
+              repeatedSave: {
+                ability: 'constitution',
+                dc: 1,
+                saveModifier: 0,
+              },
             },
           },
         ],
@@ -131,6 +135,49 @@ describe('timed conditions and persistent state', () => {
     )
     expect(result.generatedResults).toHaveLength(1)
     expect(result.generatedResults?.[0].type).toBe('repeated-save')
+  })
+
+  it('applies the repeated save modifier before exhaustion penalties', () => {
+    const condition = (saveModifier: number) => ({
+      id: `prone-${saveModifier}`,
+      type: 'prone' as const,
+      source: 'enemy' as const,
+      recipient: 'player' as const,
+      duration: {
+        remainingTurns: 2,
+        boundary: 'start' as const,
+        turnOwner: 'player' as const,
+        repeatedSave: {
+          ability: 'constitution',
+          dc: 19,
+          saveModifier,
+        },
+      },
+    })
+    const withoutModifier = calculateSequence(
+      sequence([{ id: 'round-1', turns: [turn('player-1', 'player', [])] }], {
+        ...INITIAL_SEQUENCE_STATE,
+        player: {
+          ...INITIAL_SEQUENCE_STATE.player,
+          conditions: [condition(0)],
+        },
+      }),
+    )
+    const withModifier = calculateSequence(
+      sequence([{ id: 'round-1', turns: [turn('player-1', 'player', [])] }], {
+        ...INITIAL_SEQUENCE_STATE,
+        player: {
+          ...INITIAL_SEQUENCE_STATE.player,
+          conditions: [condition(10)],
+        },
+      }),
+    )
+    expect(
+      withoutModifier.generatedResults?.[0].result.successProbability,
+    ).toBeCloseTo(0.1)
+    expect(
+      withModifier.generatedResults?.[0].result.successProbability,
+    ).toBeCloseTo(0.6)
   })
 
   it('deals ongoing typed damage at a boundary and checks concentration on post-defense damage', () => {
