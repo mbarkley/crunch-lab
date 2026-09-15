@@ -470,6 +470,132 @@ describe('event calculations', () => {
     expect(result.outcomes[0].expectedDamage).toBeCloseTo(2.25)
   })
 
+  it('applies half damage before mixed resistance and vulnerability', () => {
+    const result = calculateSequence(
+      sequenceConfig(
+        [
+          playerSave({
+            saveDc: 1,
+            damagePools: [
+              {
+                id: 'fire',
+                diceCount: 1,
+                dieSides: 2,
+                modifier: 1,
+                damageType: 'fire',
+              },
+              {
+                id: 'cold',
+                diceCount: 1,
+                dieSides: 2,
+                modifier: 1,
+                damageType: 'cold',
+              },
+            ],
+          }),
+        ],
+        {
+          initialState: {
+            player: {
+              ...INITIAL_SEQUENCE_STATE.player,
+              damageResistances: ['fire'],
+              damageVulnerabilities: ['cold'],
+            },
+            enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+          },
+        },
+      ),
+    )
+
+    // Each pool rolls 2 or 3. Half damage is 1 for either roll, then
+    // resistance reduces fire to 0 and vulnerability doubles cold to 2.
+    expect(result.outcomes[0].expectedDamage).toBeCloseTo(2)
+  })
+
+  it('combines same-type pools before half and defense rounding in a mixed event', () => {
+    const result = calculateSequence(
+      sequenceConfig(
+        [
+          playerSave({
+            saveDc: 1,
+            damagePools: [
+              {
+                id: 'fire-1',
+                diceCount: 1,
+                dieSides: 2,
+                modifier: 0,
+                damageType: 'fire',
+              },
+              {
+                id: 'fire-2',
+                diceCount: 1,
+                dieSides: 2,
+                modifier: 0,
+                damageType: 'fire',
+              },
+              {
+                id: 'cold',
+                diceCount: 1,
+                dieSides: 2,
+                modifier: 0,
+                damageType: 'cold',
+              },
+            ],
+          }),
+        ],
+        {
+          initialState: {
+            player: {
+              ...INITIAL_SEQUENCE_STATE.player,
+              damageResistances: ['fire'],
+              damageVulnerabilities: ['cold'],
+            },
+            enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+          },
+        },
+      ),
+    )
+
+    // The fire pools combine to 2, 3, 3, or 4 before halving and resistance;
+    // the cold pool contributes 0 or 2 after halving and vulnerability.
+    expect(result.outcomes[0].expectedDamage).toBeCloseTo(1.25)
+  })
+
+  it('resolves hit damage against defenses before applying hit conditions', () => {
+    const result = calculateSequence(
+      sequenceConfig(
+        [
+          playerAttack({
+            armorClass: 1,
+            damagePools: [
+              {
+                id: 'damage-1',
+                diceCount: 1,
+                dieSides: 2,
+                modifier: 0,
+                damageType: 'slashing',
+              },
+            ],
+            hitConditions: [{ type: 'petrified' }],
+          }),
+        ],
+        {
+          initialState: {
+            player: { ...INITIAL_SEQUENCE_STATE.player },
+            enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+          },
+        },
+      ),
+    )
+
+    expect(result.outcomes[0].expectedDamage).toBeCloseTo(1.5)
+    expect(
+      result.eventResults['attack-1'].stateAfter?.some(({ state }) =>
+        state.enemy.conditions.some(({ type }) => type === 'petrified'),
+      ),
+    ).toBe(true)
+  })
+
   it('resolves ability checks with sight failure, exhaustion, and branch effects', () => {
     const check: PlayerAbilityCheckConfig = {
       id: 'check-1',
