@@ -1,6 +1,8 @@
 import { Distribution } from './distribution'
 import {
   CONDITION_CATALOG_TYPES,
+  effectiveConditionTypes,
+  hasEffectiveCondition,
   isConditionImmune,
   isPersistentConditionType,
   TRANSIENT_EFFECT_TYPES,
@@ -209,6 +211,7 @@ export interface ExpectedConditionApplications {
 }
 
 export interface EventResult {
+  readonly executionProbability: number
   readonly successProbability: number
   readonly criticalProbability?: number
   readonly outcome: Outcome
@@ -223,6 +226,7 @@ export interface SequenceResult {
 
 interface EventTransition {
   readonly state: SequenceState
+  readonly executed: boolean
   readonly success: boolean
   readonly critical: boolean
   readonly exactDamage: number
@@ -576,7 +580,15 @@ function applyDamageDefenses(
   state: CombatantState,
 ) {
   if (state.damageImmunities.includes(type)) return 0
-  const resistant = state.damageResistances.includes(type)
+  if (
+    type === 'poison' &&
+    hasEffectiveCondition(state.conditions, 'petrified')
+  ) {
+    return 0
+  }
+  const resistant =
+    state.damageResistances.includes(type) ||
+    hasEffectiveCondition(state.conditions, 'petrified')
   const vulnerable = state.damageVulnerabilities.includes(type)
   if (resistant && vulnerable) return value
   let adjusted = resistant ? Math.floor(value / 2) : value
@@ -674,15 +686,80 @@ function rerolledD20(values: readonly number[], mode: AttackRollMode) {
   )
 }
 
+export type ConditionRollContext =
+  'outgoing-attack' | 'incoming-attack' | 'saving-throw'
+
+export interface ConditionRollEffects {
+  readonly advantage: readonly PersistentConditionType[]
+  readonly disadvantage: readonly PersistentConditionType[]
+  readonly automaticFailure: boolean
+}
+
+export function conditionRollEffects(
+  instances: readonly ConditionInstance[],
+  context: ConditionRollContext,
+  ability?: Ability,
+): ConditionRollEffects {
+  const effective = effectiveConditionTypes(instances)
+  const advantage: PersistentConditionType[] = []
+  const disadvantage: PersistentConditionType[] = []
+  const addDisadvantage = (condition: PersistentConditionType) => {
+    if (effective.has(condition)) disadvantage.push(condition)
+  }
+  const addAdvantage = (condition: PersistentConditionType) => {
+    if (effective.has(condition)) advantage.push(condition)
+  }
+
+  if (context === 'outgoing-attack') {
+    addDisadvantage('blinded')
+    addDisadvantage('poisoned')
+    addDisadvantage('prone')
+    addDisadvantage('restrained')
+    addDisadvantage('frightened')
+  } else if (context === 'incoming-attack') {
+    addAdvantage('blinded')
+    addAdvantage('restrained')
+    addAdvantage('stunned')
+    addAdvantage('paralyzed')
+    addAdvantage('petrified')
+    addAdvantage('unconscious')
+    addAdvantage('prone')
+  } else if (context === 'saving-throw') {
+    if (ability === 'dexterity') addDisadvantage('restrained')
+  }
+
+  const automaticFailure =
+    context === 'saving-throw' &&
+    (ability === 'strength' || ability === 'dexterity') &&
+    (effective.has('stunned') ||
+      effective.has('paralyzed') ||
+      effective.has('petrified') ||
+      effective.has('unconscious'))
+  return { advantage, disadvantage, automaticFailure }
+}
+
 function effectiveRollMode(
   manualMode: AttackRollMode,
-  hasVex: boolean,
-  hasSap: boolean,
+  advantageSources: readonly unknown[] = [],
+  disadvantageSources: readonly unknown[] = [],
 ): AttackRollMode {
-  const hasAdvantage = manualMode === 'advantage' || hasVex
-  const hasDisadvantage = manualMode === 'disadvantage' || hasSap
+  const hasAdvantage = manualMode === 'advantage' || advantageSources.length > 0
+  const hasDisadvantage =
+    manualMode === 'disadvantage' || disadvantageSources.length > 0
   if (hasAdvantage === hasDisadvantage) return 'normal'
   return hasAdvantage ? 'advantage' : 'disadvantage'
+}
+
+export function initiativeRollMode(
+  manualMode: AttackRollMode = 'normal',
+  instances: readonly ConditionInstance[] = [],
+): AttackRollMode {
+  const effective = effectiveConditionTypes(instances)
+  return effectiveRollMode(
+    manualMode,
+    effective.has('invisible') ? ['invisible'] : [],
+    effective.has('incapacitated') ? ['incapacitated'] : [],
+  )
 }
 
 export function applyConditionConfigs(
@@ -781,6 +858,23 @@ function spendInspiration(
   }
 }
 
+export function canExecuteActivity(
+  state: SequenceState,
+  owner: Combatant,
+): boolean {
+  return (
+    state[owner].exhaustion < 6 &&
+    !hasEffectiveCondition(state[owner].conditions, 'incapacitated')
+  )
+}
+
+export function activityExecutionProbability(
+  state: SequenceState,
+  owner: Combatant,
+): number {
+  return canExecuteActivity(state, owner) ? 1 : 0
+}
+
 function stateKey(state: SequenceState) {
   return (['player', 'enemy'] as const)
     .map((combatant) => {
@@ -814,6 +908,7 @@ export function sequenceStateKey(state: SequenceState) {
 function transitionKey(transition: EventTransition) {
   return [
     stateKey(transition.state),
+    transition.executed,
     transition.success,
     transition.critical,
     transition.exactDamage,
@@ -821,11 +916,15 @@ function transitionKey(transition: EventTransition) {
   ].join(':')
 }
 
-function attackSuccess(roll: number, config: AttackConfig) {
+function attackSuccess(
+  roll: number,
+  config: AttackConfig,
+  exhaustionPenalty = 0,
+) {
   return (
     roll === 20 ||
     (roll !== 1 &&
-      roll + config.attackModifier >=
+      roll + config.attackModifier - exhaustionPenalty >=
         config.armorClass + coverBonus(config.cover))
   )
 }
@@ -847,10 +946,22 @@ function attackTransitions(
   const attacker: Combatant =
     config.type === 'player-attack' ? 'player' : 'enemy'
   const target: Combatant = attacker === 'player' ? 'enemy' : 'player'
+  const attackerEffects = conditionRollEffects(
+    state[attacker].conditions,
+    'outgoing-attack',
+  )
+  const targetEffects = conditionRollEffects(
+    state[target].conditions,
+    'incoming-attack',
+  )
   const mode = effectiveRollMode(
     config.rollMode,
-    state[target].vex,
-    state[attacker].sap,
+    state[target].vex
+      ? ['vex', ...attackerEffects.advantage, ...targetEffects.advantage]
+      : [...attackerEffects.advantage, ...targetEffects.advantage],
+    state[attacker].sap
+      ? ['sap', ...attackerEffects.disadvantage, ...targetEffects.disadvantage]
+      : [...attackerEffects.disadvantage, ...targetEffects.disadvantage],
   )
   const canRerollD20 =
     state[attacker].heroicInspiration &&
@@ -863,20 +974,26 @@ function attackTransitions(
 
   return d20Rolls(mode).flatMap((values) => {
     const original = selectedD20(values, mode)
-    const initialSuccess = attackSuccess(original, config)
+    const exhaustionPenalty = state[attacker].exhaustion * 2
+    const initialSuccess = attackSuccess(original, config, exhaustionPenalty)
     const resolvedRolls =
       !initialSuccess && canRerollD20
         ? rerolledD20(values, mode)
         : Distribution.constant(original, (roll) => roll)
     return resolvedRolls.flatMap((roll) => {
-      const success = attackSuccess(roll, config)
-      const critical = success && roll === 20
+      const success = attackSuccess(roll, config, exhaustionPenalty)
+      const critical =
+        success &&
+        (roll === 20 ||
+          hasEffectiveCondition(state[target].conditions, 'paralyzed') ||
+          hasEffectiveCondition(state[target].conditions, 'unconscious'))
       const d20Spent = !initialSuccess && canRerollD20
       const stateAfterD20 = spendInspiration(consumedState, attacker, d20Spent)
       if (!success) {
         return Distribution.constant(
           {
             state: stateAfterD20,
+            executed: true,
             success: false,
             critical: false,
             exactDamage: 0,
@@ -905,6 +1022,7 @@ function attackTransitions(
             attacker,
             damage.inspirationSpent,
           ),
+          executed: true,
           success: true,
           critical,
           exactDamage: damage.damage,
@@ -944,15 +1062,27 @@ function savingThrowTransitions(
     config.type === 'player-saving-throw' ? 'player' : 'enemy'
   const source: Combatant = target === 'player' ? 'enemy' : 'player'
   const automaticFailure = config.rollMode === 'automatic-failure'
-  const mode: AttackRollMode = automaticFailure ? 'normal' : config.rollMode
+  const saveEffects = conditionRollEffects(
+    state[target].conditions,
+    'saving-throw',
+    config.saveAbility,
+  )
+  const mode: AttackRollMode = automaticFailure
+    ? 'normal'
+    : effectiveRollMode(
+        config.rollMode,
+        saveEffects.advantage,
+        saveEffects.disadvantage,
+      )
   const canRerollD20 =
     !automaticFailure &&
     state[target].heroicInspiration &&
     config.heroicInspiration?.type === 'd20-after-failure'
   const bonus =
     config.saveAbility === 'dexterity' ? coverBonus(config.cover) : 0
+  const exhaustionPenalty = state[target].exhaustion * 2
   const succeeds = (roll: number) =>
-    roll + config.saveModifier + bonus >= config.saveDc
+    roll + config.saveModifier + bonus - exhaustionPenalty >= config.saveDc
   const rolls = automaticFailure
     ? Distribution.constant<readonly number[]>([0], (values) =>
         values.join(','),
@@ -967,7 +1097,8 @@ function savingThrowTransitions(
         ? rerolledD20(values, mode)
         : Distribution.constant(original, (roll) => roll)
     return resolvedRolls.flatMap((roll) => {
-      const success = !automaticFailure && succeeds(roll)
+      const success =
+        !automaticFailure && !saveEffects.automaticFailure && succeeds(roll)
       const d20Spent = !initialSuccess && canRerollD20
       const stateAfterD20 = spendInspiration(state, target, d20Spent)
       const consequence = success ? config.successDamage : config.failureDamage
@@ -992,6 +1123,7 @@ function savingThrowTransitions(
             source,
             damage.inspirationSpent,
           ),
+          executed: true,
           success,
           critical: false,
           exactDamage: damage.damage,
@@ -1038,6 +1170,9 @@ function resultFromTransitions(
 ): EventResult {
   const target = eventTarget(config)
   return {
+    executionProbability: normalizeCalculation(
+      transitions.probabilityOf((transition) => transition.executed),
+    ),
     successProbability: normalizeCalculation(
       transitions.probabilityOf((transition) => transition.success),
     ),
@@ -1133,14 +1268,6 @@ function validateSequence(config: SequenceConfig) {
   }
 }
 
-function sequenceEvents(config: SequenceConfig) {
-  return config.rounds.flatMap((round) =>
-    round.turns.flatMap((turn) =>
-      turn.activities.flatMap((activity) => activity.events),
-    ),
-  )
-}
-
 export function calculateSequence(config: SequenceConfig): SequenceResult {
   validateSequence(config)
   let states = Distribution.constant(config.initialState, stateKey)
@@ -1148,29 +1275,49 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
   const totals = new Map<Outcome['type'], number>()
   const conditionTotals = new Map<string, ExpectedConditionApplications>()
 
-  for (const event of sequenceEvents(config)) {
-    const transitions = states.flatMap(
-      (state) => eventTransitions(event, state),
-      transitionKey,
-    )
-    const result = resultFromTransitions(event, transitions)
-    eventResults[event.id] = result
-    totals.set(
-      result.outcome.type,
-      (totals.get(result.outcome.type) ?? 0) + result.outcome.expectedDamage,
-    )
-    const target = eventTarget(event)
-    for (const application of result.conditionApplications) {
-      const key = `${application.condition}:${target}`
-      const current = conditionTotals.get(key)
-      conditionTotals.set(key, {
-        condition: application.condition,
-        target,
-        expectedApplications:
-          (current?.expectedApplications ?? 0) + application.probability,
-      })
+  for (const round of config.rounds) {
+    for (const turn of round.turns) {
+      for (const activity of turn.activities) {
+        for (const event of activity.events) {
+          const transitions = states.flatMap(
+            (state) =>
+              canExecuteActivity(state, activity.owner)
+                ? eventTransitions(event, state)
+                : Distribution.constant(
+                    {
+                      state,
+                      executed: false,
+                      success: false,
+                      critical: false,
+                      exactDamage: 0,
+                      appliedConditions: [],
+                    },
+                    transitionKey,
+                  ),
+            transitionKey,
+          )
+          const result = resultFromTransitions(event, transitions)
+          eventResults[event.id] = result
+          totals.set(
+            result.outcome.type,
+            (totals.get(result.outcome.type) ?? 0) +
+              result.outcome.expectedDamage,
+          )
+          const target = eventTarget(event)
+          for (const application of result.conditionApplications) {
+            const key = `${application.condition}:${target}`
+            const current = conditionTotals.get(key)
+            conditionTotals.set(key, {
+              condition: application.condition,
+              target,
+              expectedApplications:
+                (current?.expectedApplications ?? 0) + application.probability,
+            })
+          }
+          states = transitions.map((transition) => transition.state, stateKey)
+        }
+      }
     }
-    states = transitions.map((transition) => transition.state, stateKey)
   }
 
   const outcomes: Outcome[] = []
