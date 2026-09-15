@@ -48,6 +48,72 @@ describe('App', () => {
     ).toBeEnabled()
   })
 
+  it('creates every event family from the contextual picker', async () => {
+    const user = userEvent.setup()
+    const labels = [
+      'Enemy attack',
+      'Player saving throw',
+      'Enemy saving throw',
+      'Player ability check',
+      'Enemy ability check',
+      'Player Initiative',
+      'Enemy Initiative',
+      'Damage to player',
+      'Damage to enemy',
+      'Apply condition',
+      'Apply effect',
+      'Remove condition',
+      'Remove effect',
+      'Help',
+      'Dodge',
+      'Grappled escape',
+      'Start Concentration',
+      'Stop Concentration',
+    ]
+    for (const label of labels) {
+      const view = render(<App />)
+      await addEvent(user, label)
+      expect(screen.getByRole('article', { name: label })).toBeInTheDocument()
+      view.unmount()
+    }
+  }, 15000)
+
+  it('edits extended events and renders execution, initiative, no-damage, and condition results', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await addEvent(user, 'Player ability check')
+    const ability = screen.getByRole('article', {
+      name: 'Player ability check',
+    })
+    await user.clear(within(ability).getByLabelText('DC'))
+    await user.type(within(ability).getByLabelText('DC'), '15')
+    expect(within(ability).getByText('Execution chance')).toBeInTheDocument()
+    expect(within(ability).getByText('Success chance')).toBeInTheDocument()
+
+    await addEvent(user, 'Player Initiative')
+    const initiative = screen.getByRole('article', {
+      name: 'Player Initiative',
+    })
+    expect(
+      within(initiative).getByText('Expected initiative'),
+    ).toBeInTheDocument()
+    expect(within(initiative).getByText('10.5')).toBeInTheDocument()
+
+    await addEvent(user, 'Apply condition')
+    const apply = screen.getByRole('article', { name: 'Apply condition' })
+    await user.click(
+      within(apply).getByRole('button', { name: 'Add condition' }),
+    )
+    await user.click(within(apply).getByRole('button', { name: 'Paralyzed' }))
+    expect(within(apply).getByText('Paralyzed')).toBeInTheDocument()
+    expect(within(apply).getByText('No damage')).toBeInTheDocument()
+
+    await addEvent(user, 'Help')
+    const help = screen.getByRole('article', { name: 'Help' })
+    expect(within(help).getByLabelText('Owner')).toHaveValue('player')
+    expect(within(help).getByText('Completed')).toBeInTheDocument()
+  })
+
   it('keeps editable player and enemy initial state independent', async () => {
     const user = userEvent.setup()
     render(<App />)
