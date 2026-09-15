@@ -125,6 +125,8 @@ const DAMAGE_TYPE_OPTIONS: readonly ConditionPickerOption<DamageType>[] =
 interface StateDraft {
   readonly vex: boolean
   readonly sap: boolean
+  readonly helped: boolean
+  readonly dodging: boolean
   readonly heroicInspiration: boolean
   readonly damageImmunities: readonly DamageType[]
   readonly damageResistances: readonly DamageType[]
@@ -136,7 +138,7 @@ interface StateDraft {
   readonly concentrationModifier: string
 }
 
-type EventType = EventConfig['type']
+type EventType = EventDraft['type']
 type OutcomeType = Outcome['type']
 
 interface DamagePoolDraft {
@@ -1059,6 +1061,8 @@ function createStateDraft(combatant: Combatant): StateDraft {
   return {
     vex: state.vex,
     sap: state.sap,
+    helped: state.helped,
+    dodging: state.dodging,
     heroicInspiration: state.heroicInspiration,
     damageImmunities: [...state.damageImmunities],
     damageResistances: [...state.damageResistances],
@@ -1092,6 +1096,8 @@ function stateConfigForDraft(draft: StateDraft): {
     state: {
       vex: draft.vex,
       sap: draft.sap,
+      helped: draft.helped,
+      dodging: draft.dodging,
       heroicInspiration: draft.heroicInspiration,
       damageImmunities: draft.damageImmunities,
       damageResistances: draft.damageResistances,
@@ -1168,6 +1174,24 @@ function CombatantStatePanel({
             onChange={(event) => onChange({ sap: event.target.checked })}
           />
           Sap
+        </label>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            aria-label={`${label} has Help`}
+            checked={state.helped}
+            onChange={(event) => onChange({ helped: event.target.checked })}
+          />
+          Help
+        </label>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            aria-label={`${label} is Dodging`}
+            checked={state.dodging}
+            onChange={(event) => onChange({ dodging: event.target.checked })}
+          />
+          Dodging
         </label>
         <label className="checkbox-field">
           <input
@@ -1800,7 +1824,7 @@ function App() {
                 <strong>
                   {outcome === undefined
                     ? '—'
-                    : numberFormatter.format(outcome.expectedDamage)}
+                    : numberFormatter.format(outcome.expectedDamage ?? 0)}
                 </strong>
                 <small>
                   {events.length} {events.length === 1 ? 'event' : 'events'}
@@ -2371,7 +2395,8 @@ function App() {
                                           <strong>
                                             {result
                                               ? numberFormatter.format(
-                                                  result.outcome.expectedDamage,
+                                                  result.outcome
+                                                    .expectedDamage ?? 0,
                                                 )
                                               : '—'}
                                           </strong>

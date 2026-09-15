@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   calculateAttack,
+  calculateAbilityCheck,
+  calculateDamage,
   calculateEvent,
+  calculateInitiative,
   calculateSavingThrow,
   calculateSequence,
   INITIAL_SEQUENCE_STATE,
 } from './event'
 import type {
   AttackConfig,
+  EventConfig,
+  PlayerAbilityCheckConfig,
   PlayerAttackConfig,
   PlayerSavingThrowConfig,
   SavingThrowConfig,
@@ -63,7 +68,7 @@ const playerSave = (
 })
 
 const sequenceConfig = (
-  events: readonly (AttackConfig | SavingThrowConfig)[],
+  events: readonly EventConfig[],
   overrides: Partial<SequenceConfig> = {},
 ): SequenceConfig => ({
   initialState: {
@@ -92,9 +97,8 @@ const sequenceConfig = (
   ...overrides,
 })
 
-const calculateEventSequence = (
-  events: readonly (AttackConfig | SavingThrowConfig)[],
-) => calculateSequence(sequenceConfig(events))
+const calculateEventSequence = (events: readonly EventConfig[]) =>
+  calculateSequence(sequenceConfig(events))
 
 describe('event calculations', () => {
   it('calculates an AC-based player attack against enemies', () => {
@@ -464,6 +468,212 @@ describe('event calculations', () => {
       ),
     )
     expect(result.outcomes[0].expectedDamage).toBeCloseTo(2.25)
+  })
+
+  it('resolves ability checks with sight failure, exhaustion, and branch effects', () => {
+    const check: PlayerAbilityCheckConfig = {
+      id: 'check-1',
+      type: 'player-ability-check',
+      ability: 'wisdom',
+      dc: 12,
+      modifier: 0,
+      rollMode: 'normal',
+      sightDependent: false,
+      successConditions: [{ type: 'vex' }],
+      failureConditions: [{ type: 'sap' }],
+      successRemovals: [],
+      failureRemovals: [],
+    }
+    expect(calculateAbilityCheck(check).successProbability).toBeCloseTo(0.45)
+    expect(calculateAbilityCheck(check).conditionApplications).toEqual([
+      { condition: 'sap', probability: 0.55 },
+      { condition: 'vex', probability: 0.45 },
+    ])
+
+    const blinded = calculateSequence(
+      sequenceConfig([], {
+        initialState: {
+          player: {
+            ...INITIAL_SEQUENCE_STATE.player,
+            conditions: [
+              {
+                id: 'blind-1',
+                type: 'blinded',
+                source: 'enemy',
+                recipient: 'player',
+              },
+            ],
+          },
+          enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+        },
+        rounds: [
+          {
+            id: 'round-1',
+            turns: [
+              {
+                id: 'turn-1',
+                owner: 'player',
+                activities: [
+                  {
+                    id: 'activity-1',
+                    type: 'action',
+                    owner: 'player',
+                    events: [{ ...check, sightDependent: true }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    )
+    expect(blinded.eventResults['check-1'].successProbability).toBe(0)
+  })
+
+  it('uses Invisible for Initiative Advantage and reports the expected total', () => {
+    expect(
+      calculateInitiative({
+        id: 'initiative-direct',
+        type: 'player-initiative',
+        ability: 'dexterity',
+        modifier: 0,
+        rollMode: 'normal',
+      }).outcome,
+    ).toEqual({ type: 'expected-initiative', expectedTotal: 10.5 })
+    const result = calculateSequence(
+      sequenceConfig([], {
+        initialState: {
+          player: {
+            ...INITIAL_SEQUENCE_STATE.player,
+            conditions: [
+              {
+                id: 'invisible-1',
+                type: 'invisible',
+                source: 'player',
+                recipient: 'player',
+              },
+            ],
+          },
+          enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+        },
+        rounds: [
+          {
+            id: 'round-1',
+            turns: [
+              {
+                id: 'turn-1',
+                owner: 'player',
+                activities: [
+                  {
+                    id: 'activity-1',
+                    type: 'action',
+                    owner: 'player',
+                    events: [
+                      {
+                        id: 'initiative-1',
+                        type: 'player-initiative',
+                        ability: 'dexterity',
+                        modifier: 1,
+                        rollMode: 'normal',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    )
+    expect(result.eventResults['initiative-1'].outcome).toEqual({
+      type: 'expected-initiative',
+      expectedTotal: 14.825,
+    })
+  })
+
+  it('resolves standalone damage and state events, including Help, Dodge, and concentration', () => {
+    const damage = calculateDamage({
+      id: 'damage-1',
+      type: 'enemy-damage',
+      damagePools: [
+        {
+          id: 'pool-1',
+          diceCount: 1,
+          dieSides: 4,
+          modifier: 0,
+          damageType: 'fire',
+        },
+      ],
+    })
+    expect(damage.outcome).toEqual({
+      type: 'expected-damage-against-enemies',
+      expectedDamage: 2.5,
+    })
+
+    const result = calculateSequence(
+      sequenceConfig([], {
+        rounds: [
+          {
+            id: 'round-1',
+            turns: [
+              {
+                id: 'turn-1',
+                owner: 'player',
+                activities: [
+                  {
+                    id: 'activity-1',
+                    type: 'action',
+                    owner: 'player',
+                    events: [
+                      {
+                        id: 'help-1',
+                        type: 'help',
+                        owner: 'enemy',
+                        target: 'player',
+                      },
+                      { id: 'dodge-1', type: 'dodge', owner: 'enemy' },
+                      {
+                        id: 'start-concentration-1',
+                        type: 'start-concentration',
+                        owner: 'player',
+                        constitutionModifier: 3,
+                      },
+                      {
+                        id: 'stop-concentration-1',
+                        type: 'stop-concentration',
+                        owner: 'player',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    )
+    expect(result.eventResults['help-1'].outcome).toEqual({ type: 'no-damage' })
+    expect(result.eventResults['dodge-1'].outcome).toEqual({
+      type: 'no-damage',
+    })
+  })
+
+  it('makes Help and Dodge affect the next applicable attack', () => {
+    const helped = calculateEventSequence([
+      { id: 'help-1', type: 'help', owner: 'enemy', target: 'player' },
+      playerAttack({ id: 'attack-2' }),
+    ])
+    expect(helped.eventResults['attack-2'].successProbability).toBeCloseTo(
+      0.6975,
+    )
+
+    const dodged = calculateEventSequence([
+      { id: 'dodge-1', type: 'dodge', owner: 'enemy' },
+      playerAttack({ id: 'attack-2' }),
+    ])
+    expect(dodged.eventResults['attack-2'].successProbability).toBeCloseTo(
+      0.2025,
+    )
   })
 
   it('applies Vex on hit and uses it for the next attack against that target', () => {

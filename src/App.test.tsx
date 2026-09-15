@@ -99,7 +99,8 @@ describe('App', () => {
       within(enemyState).getByRole('checkbox', { name: 'Enemy has Vex' }),
     )
     const attack = screen.getByRole('article', { name: /player attack/i })
-    expect(within(attack).getByText('69.75%')).toBeInTheDocument()
+    const hitChance = within(attack).getByText('Hit chance').closest('span')!
+    expect(within(hitChance).getByText('69.75%')).toBeInTheDocument()
   })
 
   it('exposes initial defenses, resources, exhaustion, and concentration controls', async () => {
