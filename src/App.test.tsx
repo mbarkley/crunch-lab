@@ -48,6 +48,102 @@ describe('App', () => {
     ).toBeEnabled()
   })
 
+  it('keeps editable player and enemy initial state independent', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    const playerState = screen.getByRole('region', { name: 'Player state' })
+    const enemyState = screen.getByRole('region', { name: 'Enemy state' })
+    await user.click(
+      within(playerState).getByRole('checkbox', { name: 'Player has Vex' }),
+    )
+    await user.click(
+      within(enemyState).getByRole('checkbox', { name: 'Enemy has Sap' }),
+    )
+
+    expect(
+      within(playerState).getByRole('checkbox', { name: 'Player has Vex' }),
+    ).toBeChecked()
+    expect(
+      within(enemyState).getByRole('checkbox', { name: 'Enemy has Sap' }),
+    ).toBeChecked()
+    expect(
+      within(playerState).getByRole('checkbox', { name: 'Player has Sap' }),
+    ).not.toBeChecked()
+    expect(
+      within(enemyState).getByRole('checkbox', { name: 'Enemy has Vex' }),
+    ).not.toBeChecked()
+  })
+
+  it('uses fuzzy condition search for initial state and changes the first result', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    const enemyState = screen.getByRole('region', { name: 'Enemy state' })
+    await user.click(
+      within(enemyState).getByRole('button', { name: /^add condition$/i }),
+    )
+    const search = within(enemyState).getByRole('searchbox', {
+      name: /search conditions/i,
+    })
+    await user.type(search, 'parl')
+    expect(
+      within(enemyState).getByRole('button', { name: 'Paralyzed' }),
+    ).toBeInTheDocument()
+    await user.click(
+      within(enemyState).getByRole('button', { name: 'Paralyzed' }),
+    )
+    expect(within(enemyState).getByText('Paralyzed')).toBeInTheDocument()
+
+    await user.click(
+      within(enemyState).getByRole('checkbox', { name: 'Enemy has Vex' }),
+    )
+    const attack = screen.getByRole('article', { name: /player attack/i })
+    expect(within(attack).getByText('69.75%')).toBeInTheDocument()
+  })
+
+  it('exposes initial defenses, resources, exhaustion, and concentration controls', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    const playerState = screen.getByRole('region', { name: 'Player state' })
+    await user.selectOptions(
+      within(playerState).getByLabelText(/exhaustion level/i),
+      '6',
+    )
+    await user.click(
+      within(playerState).getByRole('checkbox', {
+        name: 'Player has Heroic Inspiration',
+      }),
+    )
+    await user.click(
+      within(playerState).getByRole('checkbox', {
+        name: 'Player is concentrating',
+      }),
+    )
+    const concentrationModifier = within(playerState).getByLabelText(
+      /concentration constitution modifier/i,
+    )
+    await user.clear(concentrationModifier)
+    await user.type(concentrationModifier, '3')
+
+    await user.click(
+      within(playerState).getByRole('button', { name: /add resistance/i }),
+    )
+    await user.click(within(playerState).getByRole('button', { name: 'Fire' }))
+
+    expect(within(playerState).getByLabelText(/exhaustion level/i)).toHaveValue(
+      '6',
+    )
+    expect(
+      within(playerState).getByRole('checkbox', {
+        name: 'Player has Heroic Inspiration',
+      }),
+    ).toBeChecked()
+    expect(concentrationModifier).toHaveValue(3)
+    expect(within(playerState).getByText('Fire')).toBeInTheDocument()
+  })
+
   it('allows an empty sequence and offers a one-click first event picker', async () => {
     const user = userEvent.setup()
     render(<App />)

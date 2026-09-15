@@ -11,12 +11,17 @@ import {
   X,
 } from 'lucide-react'
 import { useRef, useState } from 'react'
+import {
+  ConditionPicker,
+  type ConditionPickerOption,
+} from './components/ConditionPicker'
 import type {
   Ability,
   ActivityType,
   AttackRollMode,
   Combatant,
   ConditionConfig,
+  ConditionInstance,
   ConditionTarget,
   ConditionType,
   Cover,
@@ -26,13 +31,16 @@ import type {
   EventResult,
   HeroicInspirationPolicy,
   Outcome,
+  PersistentConditionType,
   SavingThrowRollMode,
 } from './probability/event'
 import {
+  PERSISTENT_CONDITION_TYPES,
   calculateEvent,
   calculateSequence,
   INITIAL_SEQUENCE_STATE,
 } from './probability/event'
+import type { CombatantState, SequenceState } from './probability/event'
 import './App.css'
 
 const DAMAGE_DIE_SIDES = [4, 6, 8, 10, 12, 20] as const
@@ -87,23 +95,6 @@ const DAMAGE_TYPES: readonly { value: DamageType; label: string }[] = [
   { value: 'slashing', label: 'Slashing' },
   { value: 'thunder', label: 'Thunder' },
 ]
-const CONDITION_TYPES: readonly ConditionType[] = [
-  'blinded',
-  'poisoned',
-  'restrained',
-  'stunned',
-  'paralyzed',
-  'unconscious',
-  'prone',
-  'grappled',
-  'frightened',
-  'petrified',
-  'incapacitated',
-  'invisible',
-  'exhaustion',
-  'vex',
-  'sap',
-]
 const CONDITION_LABELS: Record<ConditionType, string> = {
   blinded: 'Blinded',
   poisoned: 'Poisoned',
@@ -120,6 +111,29 @@ const CONDITION_LABELS: Record<ConditionType, string> = {
   exhaustion: 'Exhaustion',
   vex: 'Vex',
   sap: 'Sap',
+}
+const CONDITION_OPTIONS: readonly ConditionPickerOption<PersistentConditionType>[] =
+  PERSISTENT_CONDITION_TYPES.map((type) => ({
+    value: type,
+    label: CONDITION_LABELS[type],
+  }))
+const CONDITION_IMMUNITY_OPTIONS: readonly ConditionPickerOption<PersistentConditionType>[] =
+  CONDITION_OPTIONS
+const DAMAGE_TYPE_OPTIONS: readonly ConditionPickerOption<DamageType>[] =
+  DAMAGE_TYPES
+
+interface StateDraft {
+  readonly vex: boolean
+  readonly sap: boolean
+  readonly heroicInspiration: boolean
+  readonly damageImmunities: readonly DamageType[]
+  readonly damageResistances: readonly DamageType[]
+  readonly damageVulnerabilities: readonly DamageType[]
+  readonly conditions: readonly ConditionInstance[]
+  readonly conditionImmunities: readonly PersistentConditionType[]
+  readonly exhaustion: string
+  readonly concentration: boolean
+  readonly concentrationModifier: string
 }
 
 type EventType = EventConfig['type']
@@ -934,77 +948,39 @@ function ConditionChoices({
   selected: readonly ConditionConfig[]
   update: (field: EventField, value: EventFieldValue) => void
 }) {
-  const [isChooserOpen, setChooserOpen] = useState(false)
-  const availableConditions = CONDITION_TYPES.filter(
-    (type) => !selected.some((condition) => condition.type === type),
-  )
-  const chooserId = id + '-condition-chooser'
+  const selectedValues = selected.map((condition) => condition.type)
+  const pickerOptions = [
+    ...CONDITION_OPTIONS,
+    { value: 'vex' as const, label: CONDITION_LABELS.vex },
+    { value: 'sap' as const, label: CONDITION_LABELS.sap },
+    { value: 'exhaustion' as const, label: CONDITION_LABELS.exhaustion },
+  ] satisfies readonly ConditionPickerOption<ConditionType>[]
 
-  function addCondition(type: ConditionType) {
-    update(field, [...selected, { type }])
-    setChooserOpen(false)
-  }
-
-  function removeCondition(type: ConditionType) {
+  function updateSelected(values: readonly ConditionType[]) {
     update(
       field,
-      selected.filter((condition) => condition.type !== type),
+      values.map((type) => {
+        const existing = selected.find((condition) => condition.type === type)
+        return (
+          existing ?? {
+            type,
+            ...(type === 'exhaustion' ? { exhaustionLevels: 1 } : {}),
+          }
+        )
+      }),
     )
   }
 
   return (
-    <div className="condition-group" role="group" aria-label={label}>
-      <span>{label}</span>
-      {selected.length > 0 && (
-        <div className="condition-entries">
-          {selected.map((condition) => (
-            <div className="condition-entry" key={condition.type}>
-              <span>{CONDITION_LABELS[condition.type]}</span>
-              <button
-                className="inline-icon-button"
-                type="button"
-                aria-label={
-                  'Remove ' + CONDITION_LABELS[condition.type] + ' ' + label
-                }
-                onClick={() => removeCondition(condition.type)}
-              >
-                <X aria-hidden="true" size={15} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="condition-add">
-        <button
-          className="secondary-add-button"
-          type="button"
-          aria-expanded={isChooserOpen}
-          aria-controls={chooserId}
-          disabled={availableConditions.length === 0}
-          onClick={() => setChooserOpen((current) => !current)}
-        >
-          {isChooserOpen ? (
-            <X aria-hidden="true" size={16} />
-          ) : (
-            <Plus aria-hidden="true" size={16} />
-          )}
-          {isChooserOpen ? 'Close' : 'Add condition'}
-        </button>
-        {isChooserOpen && (
-          <div className="condition-chooser" id={chooserId}>
-            {availableConditions.map((condition) => (
-              <button
-                key={condition}
-                type="button"
-                onClick={() => addCondition(condition)}
-              >
-                {CONDITION_LABELS[condition]}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+    <ConditionPicker
+      id={`${id}-picker`}
+      label={label}
+      options={pickerOptions}
+      selected={selectedValues}
+      onChange={updateSelected}
+      closeOnSelect
+      removeLabel={(option) => `Remove ${option.label} ${label.toLowerCase()}`}
+    />
   )
 }
 
@@ -1073,6 +1049,238 @@ function configuredConditionTotals(
   return conditions.map((condition) => ({ condition, target }))
 }
 
+interface StateErrors {
+  exhaustion?: string
+  concentrationModifier?: string
+}
+
+function createStateDraft(combatant: Combatant): StateDraft {
+  const state = INITIAL_SEQUENCE_STATE[combatant]
+  return {
+    vex: state.vex,
+    sap: state.sap,
+    heroicInspiration: state.heroicInspiration,
+    damageImmunities: [...state.damageImmunities],
+    damageResistances: [...state.damageResistances],
+    damageVulnerabilities: [...state.damageVulnerabilities],
+    conditions: [...state.conditions],
+    conditionImmunities: [...state.conditionImmunities],
+    exhaustion: String(state.exhaustion),
+    concentration: state.concentration !== null,
+    concentrationModifier: String(
+      state.concentration?.constitutionModifier ?? 0,
+    ),
+  }
+}
+
+function stateConfigForDraft(draft: StateDraft): {
+  readonly state?: CombatantState
+  readonly errors: StateErrors
+} {
+  const errors: StateErrors = {}
+  const exhaustion = parseInteger(draft.exhaustion)
+  if (exhaustion === undefined || exhaustion < 0 || exhaustion > 6) {
+    errors.exhaustion = 'Choose an exhaustion level from 0 through 6.'
+  }
+  const concentrationModifier = parseInteger(draft.concentrationModifier)
+  if (draft.concentration && concentrationModifier === undefined) {
+    errors.concentrationModifier = 'Enter a whole number.'
+  }
+  if (Object.keys(errors).length > 0) return { errors }
+  return {
+    errors,
+    state: {
+      vex: draft.vex,
+      sap: draft.sap,
+      heroicInspiration: draft.heroicInspiration,
+      damageImmunities: draft.damageImmunities,
+      damageResistances: draft.damageResistances,
+      damageVulnerabilities: draft.damageVulnerabilities,
+      conditions: draft.conditions,
+      conditionImmunities: draft.conditionImmunities,
+      exhaustion: exhaustion as 0 | 1 | 2 | 3 | 4 | 5 | 6,
+      concentration: draft.concentration
+        ? { constitutionModifier: concentrationModifier! }
+        : null,
+    },
+  }
+}
+
+function CombatantStatePanel({
+  combatant,
+  state,
+  errors,
+  onChange,
+}: {
+  combatant: Combatant
+  state: StateDraft
+  errors: StateErrors
+  onChange: (change: Partial<StateDraft>) => void
+}) {
+  const label = combatant === 'player' ? 'Player' : 'Enemy'
+  const stateId = `${combatant}-state`
+  const selectedConditions = state.conditions.map((condition) => condition.type)
+
+  function updateConditions(values: readonly PersistentConditionType[]) {
+    const existing = new Map(
+      state.conditions.map((condition) => [condition.type, condition]),
+    )
+    onChange({
+      conditions: values.map(
+        (type) =>
+          existing.get(type) ?? {
+            id: `${combatant}-initial-${type}`,
+            type,
+            source: combatant,
+            recipient: combatant,
+          },
+      ),
+    })
+  }
+
+  return (
+    <section
+      className="combatant-state-panel"
+      aria-labelledby={`${stateId}-title`}
+    >
+      <div className="state-panel-heading">
+        <div>
+          <p className="eyebrow">Initial state</p>
+          <h3 id={`${stateId}-title`}>{label} state</h3>
+        </div>
+        <span className="state-panel-note">Used before Round 1</span>
+      </div>
+      <div className="state-toggle-grid">
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            aria-label={`${label} has Vex`}
+            checked={state.vex}
+            onChange={(event) => onChange({ vex: event.target.checked })}
+          />
+          Vex
+        </label>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            aria-label={`${label} has Sap`}
+            checked={state.sap}
+            onChange={(event) => onChange({ sap: event.target.checked })}
+          />
+          Sap
+        </label>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            aria-label={`${label} has Heroic Inspiration`}
+            checked={state.heroicInspiration}
+            onChange={(event) =>
+              onChange({ heroicInspiration: event.target.checked })
+            }
+          />
+          Heroic Inspiration
+        </label>
+      </div>
+      <div className="state-field-grid">
+        <div className="field">
+          <label htmlFor={`${stateId}-exhaustion`}>Exhaustion level</label>
+          <select
+            id={`${stateId}-exhaustion`}
+            value={state.exhaustion}
+            aria-invalid={Boolean(errors.exhaustion)}
+            onChange={(event) => onChange({ exhaustion: event.target.value })}
+          >
+            {[0, 1, 2, 3, 4, 5, 6].map((level) => (
+              <option key={level} value={level}>
+                {level}
+              </option>
+            ))}
+          </select>
+          {errors.exhaustion && (
+            <span className="field-error">{errors.exhaustion}</span>
+          )}
+        </div>
+        <label className="checkbox-field state-concentration-toggle">
+          <input
+            type="checkbox"
+            aria-label={`${label} is concentrating`}
+            checked={state.concentration}
+            onChange={(event) =>
+              onChange({ concentration: event.target.checked })
+            }
+          />
+          Concentrating
+        </label>
+        {state.concentration && (
+          <div className="field">
+            <label htmlFor={`${stateId}-concentration-modifier`}>
+              Concentration Constitution modifier
+            </label>
+            <input
+              id={`${stateId}-concentration-modifier`}
+              type="number"
+              step="1"
+              value={state.concentrationModifier}
+              aria-invalid={Boolean(errors.concentrationModifier)}
+              onChange={(event) =>
+                onChange({ concentrationModifier: event.target.value })
+              }
+            />
+            {errors.concentrationModifier && (
+              <span className="field-error">
+                {errors.concentrationModifier}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="state-picker-grid">
+        <ConditionPicker
+          id={`${stateId}-conditions`}
+          label="Conditions"
+          options={CONDITION_OPTIONS}
+          selected={selectedConditions}
+          onChange={updateConditions}
+        />
+        <ConditionPicker
+          id={`${stateId}-condition-immunities`}
+          label="Condition immunities"
+          options={CONDITION_IMMUNITY_OPTIONS}
+          selected={state.conditionImmunities}
+          onChange={(conditionImmunities) => onChange({ conditionImmunities })}
+          addLabel="Add immunity"
+        />
+        <ConditionPicker
+          id={`${stateId}-damage-immunities`}
+          label="Damage immunities"
+          options={DAMAGE_TYPE_OPTIONS}
+          selected={state.damageImmunities}
+          onChange={(damageImmunities) => onChange({ damageImmunities })}
+          addLabel="Add immunity"
+        />
+        <ConditionPicker
+          id={`${stateId}-damage-resistances`}
+          label="Damage resistances"
+          options={DAMAGE_TYPE_OPTIONS}
+          selected={state.damageResistances}
+          onChange={(damageResistances) => onChange({ damageResistances })}
+          addLabel="Add resistance"
+        />
+        <ConditionPicker
+          id={`${stateId}-damage-vulnerabilities`}
+          label="Damage vulnerabilities"
+          options={DAMAGE_TYPE_OPTIONS}
+          selected={state.damageVulnerabilities}
+          onChange={(damageVulnerabilities) =>
+            onChange({ damageVulnerabilities })
+          }
+          addLabel="Add vulnerability"
+        />
+      </div>
+    </section>
+  )
+}
+
 function EventTypeButtons({
   onSelect,
 }: {
@@ -1110,6 +1318,12 @@ function App() {
       ],
     },
   ])
+  const [stateDrafts, setStateDrafts] = useState<Record<Combatant, StateDraft>>(
+    () => ({
+      player: createStateDraft('player'),
+      enemy: createStateDraft('enemy'),
+    }),
+  )
   const [chooserActivityId, setChooserActivityId] = useState<string>()
   const [draggedEvent, setDraggedEvent] = useState<
     { readonly activityId: string; readonly eventId: string } | undefined
@@ -1122,6 +1336,13 @@ function App() {
   const nextEventId = useRef(2)
   const nextDamagePoolId = useRef(1)
 
+  function updateState(combatant: Combatant, change: Partial<StateDraft>) {
+    setStateDrafts((current) => ({
+      ...current,
+      [combatant]: { ...current[combatant], ...change },
+    }))
+  }
+
   const events = rounds.flatMap((round) =>
     round.turns.flatMap((turn) =>
       turn.activities.flatMap((activity) => activity.events),
@@ -1133,26 +1354,36 @@ function App() {
   const isSequenceValid = [...evaluations.values()].every(
     (evaluation) => evaluation.config,
   )
-  const sequence = isSequenceValid
-    ? calculateSequence({
-        initialState: INITIAL_SEQUENCE_STATE,
-        rounds: rounds.map((round) => ({
-          id: round.id,
-          turns: round.turns.map((turn) => ({
-            id: turn.id,
-            owner: turn.owner,
-            activities: turn.activities.map((activity) => ({
-              id: activity.id,
-              type: activity.type,
-              owner: activity.owner,
-              events: activity.events.map(
-                (event) => evaluations.get(event.id)!.config!,
-              ),
+  const playerStateEvaluation = stateConfigForDraft(stateDrafts.player)
+  const enemyStateEvaluation = stateConfigForDraft(stateDrafts.enemy)
+  const initialState: SequenceState | undefined =
+    playerStateEvaluation.state && enemyStateEvaluation.state
+      ? {
+          player: playerStateEvaluation.state,
+          enemy: enemyStateEvaluation.state,
+        }
+      : undefined
+  const sequence =
+    isSequenceValid && initialState
+      ? calculateSequence({
+          initialState,
+          rounds: rounds.map((round) => ({
+            id: round.id,
+            turns: round.turns.map((turn) => ({
+              id: turn.id,
+              owner: turn.owner,
+              activities: turn.activities.map((activity) => ({
+                id: activity.id,
+                type: activity.type,
+                owner: activity.owner,
+                events: activity.events.map(
+                  (event) => evaluations.get(event.id)!.config!,
+                ),
+              })),
             })),
           })),
-        })),
-      })
-    : undefined
+        })
+      : undefined
   const shownOutcomeTypes = [...new Set(events.map(outcomeTypeFor))]
   const shownConditionTotals = [
     ...new Map(
@@ -1600,6 +1831,21 @@ function App() {
             )
           })}
         </div>
+      </section>
+
+      <section className="state-panels" aria-label="Initial combatant state">
+        <CombatantStatePanel
+          combatant="player"
+          state={stateDrafts.player}
+          errors={playerStateEvaluation.errors}
+          onChange={(change) => updateState('player', change)}
+        />
+        <CombatantStatePanel
+          combatant="enemy"
+          state={stateDrafts.enemy}
+          errors={enemyStateEvaluation.errors}
+          onChange={(change) => updateState('enemy', change)}
+        />
       </section>
 
       <section className="workspace" aria-labelledby="sequence-title">
