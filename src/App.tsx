@@ -45,8 +45,37 @@ const ATTACK_ROLL_MODES: readonly {
   { value: 'advantage', label: 'Advantage' },
   { value: 'disadvantage', label: 'Disadvantage' },
 ]
-const CONDITION_TYPES: readonly ConditionType[] = ['vex', 'sap']
+const CONDITION_TYPES: readonly ConditionType[] = [
+  'blinded',
+  'poisoned',
+  'restrained',
+  'stunned',
+  'paralyzed',
+  'unconscious',
+  'prone',
+  'grappled',
+  'frightened',
+  'petrified',
+  'incapacitated',
+  'invisible',
+  'exhaustion',
+  'vex',
+  'sap',
+]
 const CONDITION_LABELS: Record<ConditionType, string> = {
+  blinded: 'Blinded',
+  poisoned: 'Poisoned',
+  restrained: 'Restrained',
+  stunned: 'Stunned',
+  paralyzed: 'Paralyzed',
+  unconscious: 'Unconscious',
+  prone: 'Prone',
+  grappled: 'Grappled',
+  frightened: 'Frightened',
+  petrified: 'Petrified',
+  incapacitated: 'Incapacitated',
+  invisible: 'Invisible',
+  exhaustion: 'Exhaustion',
   vex: 'Vex',
   sap: 'Sap',
 }

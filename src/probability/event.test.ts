@@ -3,6 +3,7 @@ import {
   calculateAttack,
   calculateEvent,
   calculateSavingThrow,
+  INITIAL_SEQUENCE_STATE,
   calculateSequence,
 } from './event'
 import type {
@@ -48,8 +49,8 @@ const sequenceConfig = (
   overrides: Partial<SequenceConfig> = {},
 ): SequenceConfig => ({
   initialState: {
-    player: { vex: false, sap: false },
-    enemy: { vex: false, sap: false },
+    player: INITIAL_SEQUENCE_STATE.player,
+    enemy: INITIAL_SEQUENCE_STATE.enemy,
   },
   rounds: [
     {
@@ -408,8 +409,8 @@ describe('event calculations', () => {
     const result = calculateSequence(
       sequenceConfig([playerAttack()], {
         initialState: {
-          player: { vex: false, sap: false },
-          enemy: { vex: true, sap: false },
+          player: INITIAL_SEQUENCE_STATE.player,
+          enemy: { ...INITIAL_SEQUENCE_STATE.enemy, vex: true },
         },
       }),
     )
@@ -424,8 +425,8 @@ describe('event calculations', () => {
     const second = playerAttack({ id: 'attack-2' })
     const result = calculateSequence({
       initialState: {
-        player: { vex: false, sap: false },
-        enemy: { vex: false, sap: false },
+        player: INITIAL_SEQUENCE_STATE.player,
+        enemy: INITIAL_SEQUENCE_STATE.enemy,
       },
       rounds: [
         {

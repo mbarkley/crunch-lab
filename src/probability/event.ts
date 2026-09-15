@@ -1,9 +1,49 @@
 import { Distribution, keepHighest, keepLowest, sumDice } from './distribution'
+import {
+  CONDITION_CATALOG_TYPES,
+  isConditionImmune,
+  isPersistentConditionType,
+  TRANSIENT_EFFECT_TYPES,
+} from './conditions'
+import type {
+  Combatant,
+  ConditionInstance,
+  ConditionType,
+  ExhaustionLevel,
+  PersistentConditionType,
+} from './conditions'
+
+export {
+  CONDITION_CATALOG,
+  CONDITION_CATALOG_TYPES,
+  effectiveConditionTypes,
+  hasEffectiveCondition,
+  isConditionCatalogType,
+  isConditionImmune,
+  isTransientEffectType,
+  PERSISTENT_CONDITION_TYPES,
+  TRANSIENT_EFFECT_TYPES,
+} from './conditions'
+export type {
+  Combatant,
+  ConditionCatalogType,
+  ConditionDefinition,
+  ConditionDuration,
+  ConditionInstance,
+  ConditionType,
+  ExhaustionLevel,
+  PersistentConditionType,
+  TransientEffectType,
+  TurnBoundary,
+} from './conditions'
 
 export type AttackRollMode = 'normal' | 'advantage' | 'disadvantage'
-export type ConditionType = 'vex' | 'sap'
-export type ConditionConfig =
-  { readonly type: 'vex' } | { readonly type: 'sap' }
+export interface ConditionConfig {
+  readonly type: ConditionType
+  readonly id?: string
+  readonly duration?: ConditionInstance['duration']
+  readonly exhaustionLevels?: number
+}
 export type DamageConsequence = 'none' | 'half' | 'full'
 
 export interface DamagePoolConfig {
@@ -57,12 +97,19 @@ export interface EnemySavingThrowConfig extends BaseSavingThrowConfig {
 export type SavingThrowConfig = PlayerSavingThrowConfig | EnemySavingThrowConfig
 export type EventConfig = AttackConfig | SavingThrowConfig
 
-export type Combatant = 'player' | 'enemy'
 export type ActivityType = 'action' | 'bonus-action'
+
+export interface ConcentrationState {
+  readonly constitutionModifier: number
+}
 
 export interface CombatantState {
   readonly vex: boolean
   readonly sap: boolean
+  readonly conditions: readonly ConditionInstance[]
+  readonly conditionImmunities: readonly PersistentConditionType[]
+  readonly exhaustion: ExhaustionLevel
+  readonly concentration: ConcentrationState | null
 }
 
 export interface SequenceState {
@@ -146,15 +193,32 @@ const ATTACK_ROLL_MODES: readonly AttackRollMode[] = [
   'advantage',
   'disadvantage',
 ]
-const CONDITION_TYPES: readonly ConditionType[] = ['vex', 'sap']
+const CONDITION_TYPES: readonly ConditionType[] = [
+  ...CONDITION_CATALOG_TYPES,
+  ...TRANSIENT_EFFECT_TYPES,
+]
 const DAMAGE_CONSEQUENCES: readonly DamageConsequence[] = [
   'none',
   'half',
   'full',
 ]
 export const INITIAL_SEQUENCE_STATE: SequenceState = {
-  player: { vex: false, sap: false },
-  enemy: { vex: false, sap: false },
+  player: {
+    vex: false,
+    sap: false,
+    conditions: [],
+    conditionImmunities: [],
+    exhaustion: 0,
+    concentration: null,
+  },
+  enemy: {
+    vex: false,
+    sap: false,
+    conditions: [],
+    conditionImmunities: [],
+    exhaustion: 0,
+    concentration: null,
+  },
 }
 
 function normalizeCalculation(value: number) {
@@ -168,10 +232,58 @@ function assertInteger(value: number, name: string, minimum?: number) {
   }
 }
 
+function validateConditionDuration(duration: ConditionInstance['duration']) {
+  if (duration === undefined) return
+  assertInteger(duration.remainingTurns, 'Condition duration', 1)
+  if (duration.boundary !== 'start' && duration.boundary !== 'end') {
+    throw new RangeError('Condition duration boundary must be start or end')
+  }
+  if (duration.turnOwner !== 'player' && duration.turnOwner !== 'enemy') {
+    throw new RangeError(
+      'Condition duration turn owner must be player or enemy',
+    )
+  }
+}
+
 function validateConditions(conditions: readonly ConditionConfig[]) {
+  const ids = new Set<string>()
   for (const condition of conditions) {
+    if (condition.type === 'exhaustion') {
+      assertInteger(condition.exhaustionLevels ?? 1, 'Exhaustion levels', 1)
+      if (
+        condition.exhaustionLevels !== undefined &&
+        condition.exhaustionLevels > 6
+      ) {
+        throw new RangeError('Exhaustion levels must not exceed 6')
+      }
+      if (condition.duration !== undefined) {
+        throw new RangeError('Exhaustion applications cannot have a duration')
+      }
+    } else if (condition.exhaustionLevels !== undefined) {
+      throw new RangeError(
+        'Exhaustion levels can only be set for Exhaustion applications',
+      )
+    }
     if (!CONDITION_TYPES.includes(condition.type)) {
-      throw new RangeError('Condition must be vex or sap')
+      throw new RangeError('Condition is not supported')
+    }
+    if (condition.id !== undefined) {
+      if (condition.id.length === 0) {
+        throw new RangeError('Condition application ID must not be empty')
+      }
+      if (ids.has(condition.id)) {
+        throw new RangeError(
+          `Duplicate condition application ID: ${condition.id}`,
+        )
+      }
+      ids.add(condition.id)
+    }
+    if (isPersistentConditionType(condition.type)) {
+      validateConditionDuration(condition.duration)
+    } else if (condition.duration !== undefined) {
+      throw new RangeError(
+        'Only persistent condition applications can have a duration',
+      )
     }
   }
 }
@@ -252,33 +364,113 @@ function effectiveRollMode(
   return hasAdvantage ? 'advantage' : 'disadvantage'
 }
 
-function applyConditions(
+export function applyConditionConfigs(
   state: SequenceState,
-  target: 'player' | 'enemy',
-  conditions: readonly ConditionType[],
-): SequenceState {
-  if (conditions.length === 0) return state
-  const uniqueConditions = [...new Set(conditions)]
-  const targetState = { ...state[target] }
-  for (const condition of uniqueConditions) targetState[condition] = true
+  target: Combatant,
+  source: Combatant,
+  applicationId: string,
+  conditions: readonly ConditionConfig[],
+): {
+  readonly state: SequenceState
+  readonly appliedConditions: readonly ConditionType[]
+} {
+  validateConditions(conditions)
+  if (conditions.length === 0) {
+    return { state, appliedConditions: [] }
+  }
+
+  let vex = state[target].vex
+  let sap = state[target].sap
+  const instances = [...state[target].conditions]
+  const appliedConditions = new Set<ConditionType>()
+
+  conditions.forEach((condition, index) => {
+    if (condition.type === 'vex' || condition.type === 'sap') {
+      if (condition.type === 'vex') vex = true
+      else sap = true
+      appliedConditions.add(condition.type)
+      return
+    }
+
+    if (condition.type === 'exhaustion') {
+      const levels = condition.exhaustionLevels ?? 1
+      const exhaustion = Math.min(
+        6,
+        state[target].exhaustion + levels,
+      ) as ExhaustionLevel
+      state = {
+        ...state,
+        [target]: {
+          ...state[target],
+          exhaustion,
+        },
+      }
+      appliedConditions.add(condition.type)
+      return
+    }
+
+    if (
+      isConditionImmune(
+        instances,
+        state[target].conditionImmunities,
+        condition.type,
+      )
+    ) {
+      return
+    }
+
+    instances.push({
+      id: condition.id ?? `${applicationId}:${index}`,
+      type: condition.type,
+      source,
+      recipient: target,
+      ...(condition.duration === undefined
+        ? {}
+        : { duration: condition.duration }),
+    })
+    appliedConditions.add(condition.type)
+  })
+
   return {
-    ...state,
-    [target]: targetState,
+    state: {
+      ...state,
+      [target]: {
+        ...state[target],
+        vex,
+        sap,
+        conditions: instances,
+      },
+    },
+    appliedConditions: [...appliedConditions],
   }
 }
 
-function stateKey(state: SequenceState) {
+function combatantStateKey(state: CombatantState) {
+  const conditions = state.conditions
+    .map(
+      (condition) =>
+        `${condition.id},${condition.type},${condition.source},${condition.recipient},${condition.duration?.remainingTurns ?? ''},${condition.duration?.boundary ?? ''},${condition.duration?.turnOwner ?? ''}`,
+    )
+    .sort()
+    .join(';')
   return [
-    state.player.vex,
-    state.player.sap,
-    state.enemy.vex,
-    state.enemy.sap,
+    state.vex,
+    state.sap,
+    conditions,
+    [...state.conditionImmunities].sort().join(','),
+    state.exhaustion,
+    state.concentration?.constitutionModifier ?? '',
   ].join(':')
 }
 
+export function sequenceStateKey(state: SequenceState) {
+  return [combatantStateKey(state.player), combatantStateKey(state.enemy)].join(
+    '|',
+  )
+}
 function transitionKey(transition: EventTransition) {
   return [
-    stateKey(transition.state),
+    sequenceStateKey(transition.state),
     transition.success,
     transition.critical,
     transition.expectedDamage,
@@ -318,17 +510,21 @@ function attackTransitions(
     const success =
       critical ||
       (roll !== 1 && roll + config.attackModifier >= config.armorClass)
-    const appliedConditions = success
-      ? [...new Set(config.hitConditions.map((condition) => condition.type))]
-      : []
+    const application = success
+      ? applyConditionConfigs(
+          consumedState,
+          target,
+          attacker,
+          `${config.id}:hit`,
+          config.hitConditions,
+        )
+      : { state: consumedState, appliedConditions: [] }
     return {
-      state: success
-        ? applyConditions(consumedState, target, appliedConditions)
-        : consumedState,
+      state: application.state,
       success,
       critical,
       expectedDamage: success ? (critical ? criticalDamage : normalDamage) : 0,
-      appliedConditions,
+      appliedConditions: application.appliedConditions,
     }
   }, transitionKey)
 }
@@ -353,19 +549,20 @@ function savingThrowTransitions(
   return Distribution.die(20).map((roll) => {
     const success = roll + config.saveModifier >= config.saveDc
     const consequence = success ? config.successDamage : config.failureDamage
-    const appliedConditions = [
-      ...new Set(
-        (success ? config.successConditions : config.failureConditions).map(
-          (condition) => condition.type,
-        ),
-      ),
-    ]
+    const branch = success ? 'success' : 'failure'
+    const application = applyConditionConfigs(
+      state,
+      target,
+      target === 'player' ? 'enemy' : 'player',
+      `${config.id}:${branch}`,
+      success ? config.successConditions : config.failureConditions,
+    )
     return {
-      state: applyConditions(state, target, appliedConditions),
+      state: application.state,
       success,
       critical: false,
       expectedDamage: expectedDamage(damage, consequence),
-      appliedConditions,
+      appliedConditions: application.appliedConditions,
     }
   }, transitionKey)
 }
@@ -455,8 +652,55 @@ function assertUniqueId(id: string, kind: string, ids: Set<string>) {
   ids.add(id)
 }
 
+function validateCombatantState(
+  state: CombatantState,
+  owner: Combatant,
+  ids: Set<string>,
+) {
+  if (typeof state.vex !== 'boolean' || typeof state.sap !== 'boolean') {
+    throw new RangeError('Vex and Sap state must be boolean')
+  }
+  assertInteger(state.exhaustion, 'Exhaustion level', 0)
+  if (state.exhaustion > 6) {
+    throw new RangeError('Exhaustion level must not exceed 6')
+  }
+  const immunities = new Set<PersistentConditionType>()
+  for (const immunity of state.conditionImmunities) {
+    if (!isPersistentConditionType(immunity)) {
+      throw new RangeError('Condition immunity is not supported')
+    }
+    if (immunities.has(immunity)) {
+      throw new RangeError(`Duplicate condition immunity: ${immunity}`)
+    }
+    immunities.add(immunity)
+  }
+  if (state.concentration !== null) {
+    assertInteger(
+      state.concentration.constitutionModifier,
+      'Concentration Constitution modifier',
+    )
+  }
+  for (const condition of state.conditions) {
+    assertUniqueId(condition.id, 'Condition instance', ids)
+    if (!isPersistentConditionType(condition.type)) {
+      throw new RangeError('Condition instance type is not supported')
+    }
+    if (condition.source !== 'player' && condition.source !== 'enemy') {
+      throw new RangeError('Condition source must be player or enemy')
+    }
+    if (condition.recipient !== owner) {
+      throw new RangeError(
+        `Condition ${condition.id} recipient must match its state owner`,
+      )
+    }
+    validateConditionDuration(condition.duration)
+  }
+}
+
 function validateSequence(config: SequenceConfig) {
   const ids = new Set<string>()
+  validateCombatantState(config.initialState.player, 'player', ids)
+  validateCombatantState(config.initialState.enemy, 'enemy', ids)
   for (const round of config.rounds) {
     assertUniqueId(round.id, 'Round', ids)
     for (const turn of round.turns) {
@@ -476,6 +720,22 @@ function validateSequence(config: SequenceConfig) {
         }
         for (const event of activity.events) {
           assertUniqueId(event.id, 'Event', ids)
+          const conditionLists =
+            event.type === 'player-attack' || event.type === 'enemy-attack'
+              ? [{ branch: 'hit', conditions: event.hitConditions }]
+              : [
+                  { branch: 'failure', conditions: event.failureConditions },
+                  { branch: 'success', conditions: event.successConditions },
+                ]
+          for (const { branch, conditions } of conditionLists) {
+            validateConditions(conditions)
+            conditions.forEach((condition, index) => {
+              if (!isPersistentConditionType(condition.type)) return
+              const conditionId =
+                condition.id ?? `${event.id}:${branch}:${index}`
+              assertUniqueId(conditionId, 'Condition instance', ids)
+            })
+          }
         }
       }
     }
@@ -492,7 +752,7 @@ function sequenceEvents(config: SequenceConfig) {
 
 export function calculateSequence(config: SequenceConfig): SequenceResult {
   validateSequence(config)
-  let states = Distribution.constant(config.initialState, stateKey)
+  let states = Distribution.constant(config.initialState, sequenceStateKey)
   const eventResults: Record<string, EventResult> = {}
   const totals = new Map<Outcome['type'], number>()
   const conditionTotals = new Map<string, ExpectedConditionApplications>()
@@ -519,7 +779,7 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
           (current?.expectedApplications ?? 0) + application.probability,
       })
     }
-    states = transitions.map((transition) => transition.state, stateKey)
+    states = transitions.map((transition) => transition.state, sequenceStateKey)
   }
 
   const outcomes: Outcome[] = []
