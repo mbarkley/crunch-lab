@@ -200,6 +200,13 @@ interface InspirationDraft {
 interface BaseEventDraft extends DamageDraft, InspirationDraft {
   readonly id: string
   readonly type: EventType
+  readonly conditionGate?: ConditionGateDraft
+}
+
+interface ConditionGateDraft {
+  readonly target: Combatant
+  readonly mustHave: readonly ConditionRemovalConfig[]
+  readonly mustNotHave: readonly ConditionRemovalConfig[]
 }
 
 interface AttackDraft extends BaseEventDraft {
@@ -209,6 +216,14 @@ interface AttackDraft extends BaseEventDraft {
   readonly rollMode: AttackRollMode
   readonly cover: Cover
   readonly hitConditions: readonly ConditionConfig[]
+  readonly hitSaveEnabled: boolean
+  readonly hitSaveDc: string
+  readonly hitSaveModifier: string
+  readonly hitSaveAbility: Ability
+  readonly hitSaveRollMode: SavingThrowRollMode
+  readonly hitSaveCover: Cover
+  readonly hitSaveFailureConditions: readonly ConditionConfig[]
+  readonly hitSaveSuccessConditions: readonly ConditionConfig[]
 }
 
 interface SavingThrowDraft extends BaseEventDraft {
@@ -250,6 +265,25 @@ interface InitiativeDraft extends BaseEventDraft {
 interface StandaloneDamageDraft extends BaseEventDraft {
   readonly type: 'player-damage' | 'enemy-damage'
   readonly target: Combatant
+}
+
+interface GrappleOrShoveDraft extends BaseEventDraft {
+  readonly type:
+    'player-grapple' | 'enemy-grapple' | 'player-shove' | 'enemy-shove'
+  readonly saveDc: string
+  readonly targetSaveModifier: string
+  readonly targetSaveAbility: 'strength' | 'dexterity'
+  readonly useTargetSaveOverride: boolean
+  readonly rollMode: SavingThrowRollMode
+  readonly cover: Cover
+}
+
+interface ConditionalDraft extends BaseEventDraft {
+  readonly type: 'conditional'
+  readonly target: Combatant
+  readonly mustHave: readonly ConditionRemovalConfig[]
+  readonly mustNotHave: readonly ConditionRemovalConfig[]
+  readonly events: readonly EventDraft[]
 }
 
 interface ApplyConditionDraft extends BaseEventDraft {
@@ -321,6 +355,8 @@ type EventDraft =
   | AbilityCheckDraft
   | InitiativeDraft
   | StandaloneDamageDraft
+  | GrappleOrShoveDraft
+  | ConditionalDraft
   | ApplyConditionDraft
   | ApplyEffectDraft
   | RemoveConditionDraft
@@ -335,6 +371,7 @@ interface ActivityDraft {
   readonly id: string
   readonly type: ActivityType
   readonly owner: Combatant
+  readonly conditionGate?: ConditionGateDraft
   readonly events: readonly EventDraft[]
 }
 
@@ -398,6 +435,21 @@ type EventField =
   | 'owner'
   | 'grappledConditionId'
   | 'constitutionModifier'
+  | 'targetSaveModifier'
+  | 'targetSaveAbility'
+  | 'useTargetSaveOverride'
+  | 'mustHave'
+  | 'mustNotHave'
+  | 'events'
+  | 'conditionGate'
+  | 'hitSaveEnabled'
+  | 'hitSaveDc'
+  | 'hitSaveModifier'
+  | 'hitSaveAbility'
+  | 'hitSaveRollMode'
+  | 'hitSaveCover'
+  | 'hitSaveFailureConditions'
+  | 'hitSaveSuccessConditions'
 type EventFieldValue =
   | string
   | boolean
@@ -405,6 +457,8 @@ type EventFieldValue =
   | Ability
   | readonly ConditionConfig[]
   | readonly ConditionRemovalConfig[]
+  | readonly EventDraft[]
+  | ConditionGateDraft
 type DamagePoolField = 'diceCount' | 'dieSides' | 'modifier' | 'damageType'
 
 interface DamagePoolErrors {
@@ -469,6 +523,11 @@ const EVENT_LABELS: Record<EventType, string> = {
   'enemy-initiative': 'Enemy Initiative',
   'player-damage': 'Damage to Player',
   'enemy-damage': 'Damage to Enemy',
+  'player-grapple': 'Player Grapple',
+  'enemy-grapple': 'Enemy Grapple',
+  'player-shove': 'Player Shove',
+  'enemy-shove': 'Enemy Shove',
+  conditional: 'Conditional',
   'apply-condition': 'Apply Condition',
   'apply-effect': 'Apply Effect',
   'remove-condition': 'Remove Condition',
@@ -491,6 +550,11 @@ const EVENT_ICONS: Record<EventType, LucideIcon> = {
   'enemy-initiative': Sparkles,
   'player-damage': HeartPulse,
   'enemy-damage': HeartPulse,
+  'player-grapple': Hand,
+  'enemy-grapple': Hand,
+  'player-shove': Hand,
+  'enemy-shove': Hand,
+  conditional: Calculator,
   'apply-condition': CirclePlus,
   'apply-effect': WandSparkles,
   'remove-condition': CircleMinus,
@@ -520,6 +584,14 @@ function createEvent(type: EventType, id: string): EventDraft {
       rollMode: 'normal',
       cover: 'none',
       hitConditions: [],
+      hitSaveEnabled: false,
+      hitSaveDc: '',
+      hitSaveModifier: '',
+      hitSaveAbility: 'dexterity',
+      hitSaveRollMode: 'normal',
+      hitSaveCover: 'none',
+      hitSaveFailureConditions: [],
+      hitSaveSuccessConditions: [],
       ...createDefaultDamage(id),
       ...createDefaultInspiration(id),
     }
@@ -530,8 +602,8 @@ function createEvent(type: EventType, id: string): EventDraft {
       type,
       overrideSaveDc: false,
       overrideSaveModifier: false,
-      saveDc: '12',
-      saveModifier: '0',
+      saveDc: '',
+      saveModifier: '',
       saveAbility: 'dexterity',
       rollMode: 'normal',
       cover: 'none',
@@ -576,6 +648,37 @@ function createEvent(type: EventType, id: string): EventDraft {
       id,
       type,
       target: type === 'player-damage' ? 'player' : 'enemy',
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (
+    type === 'player-grapple' ||
+    type === 'enemy-grapple' ||
+    type === 'player-shove' ||
+    type === 'enemy-shove'
+  ) {
+    return {
+      id,
+      type,
+      saveDc: '',
+      targetSaveModifier: '',
+      targetSaveAbility: 'strength',
+      useTargetSaveOverride: false,
+      rollMode: 'normal',
+      cover: 'none',
+      ...createDefaultDamage(id),
+      ...createDefaultInspiration(id),
+    }
+  }
+  if (type === 'conditional') {
+    return {
+      id,
+      type,
+      target: 'enemy',
+      mustHave: [],
+      mustNotHave: [],
+      events: [],
       ...createDefaultDamage(id),
       ...createDefaultInspiration(id),
     }
@@ -699,6 +802,17 @@ function duplicateEvent(
     damagePools,
     heroicInspirationPoolId:
       poolIds.get(event.heroicInspirationPoolId) ?? damagePools[0].id,
+    ...(event.type === 'conditional'
+      ? {
+          events: event.events.map((child, index) =>
+            duplicateEvent(
+              child,
+              `${id}-child-${index + 1}`,
+              createDamagePoolId,
+            ),
+          ),
+        }
+      : {}),
   } as EventDraft
 }
 
@@ -821,6 +935,20 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
     if (draft.attackModifier !== '' && attackModifier === undefined) {
       errors.attackModifier = 'Enter a whole number.'
     }
+    const hitSaveDc = parseInteger(draft.hitSaveDc)
+    const hitSaveModifier = parseInteger(draft.hitSaveModifier)
+    if (
+      draft.hitSaveEnabled &&
+      draft.hitSaveDc !== '' &&
+      (hitSaveDc === undefined || hitSaveDc < 1)
+    )
+      errors.saveDc = 'Enter a whole number of at least 1.'
+    if (
+      draft.hitSaveEnabled &&
+      draft.hitSaveModifier !== '' &&
+      hitSaveModifier === undefined
+    )
+      errors.saveModifier = 'Enter a whole number.'
     const heroicInspiration = inspirationPolicyFor(draft, errors)
     if (Object.keys(errors).length > 0) return { errors }
 
@@ -832,6 +960,21 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       rollMode: draft.rollMode,
       cover: draft.cover,
       hitConditions: draft.hitConditions,
+      ...(draft.hitSaveEnabled
+        ? {
+            hitSave: {
+              ...(hitSaveDc === undefined ? {} : { saveDc: hitSaveDc }),
+              ...(hitSaveModifier === undefined
+                ? {}
+                : { saveModifier: hitSaveModifier }),
+              saveAbility: draft.hitSaveAbility,
+              rollMode: draft.hitSaveRollMode,
+              cover: draft.hitSaveCover,
+              failureConditions: draft.hitSaveFailureConditions,
+              successConditions: draft.hitSaveSuccessConditions,
+            },
+          }
+        : {}),
       damagePools,
       heroicInspiration,
     }
@@ -943,6 +1086,49 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       target: draft.target,
       damagePools,
       heroicInspiration,
+    }
+    return { errors, config, result: calculateEvent(config) }
+  }
+
+  if (draft.type === 'conditional') {
+    const children = draft.events.map(evaluateEvent)
+    if (children.some((child) => child.config === undefined)) return { errors }
+    const config: EventConfig = {
+      id: draft.id,
+      type: 'conditional',
+      target: draft.target,
+      mustHave: draft.mustHave,
+      mustNotHave: draft.mustNotHave,
+      events: children.map((child) => child.config!),
+    }
+    return { errors, config, result: calculateEvent(config) }
+  }
+
+  if (
+    draft.type === 'player-grapple' ||
+    draft.type === 'enemy-grapple' ||
+    draft.type === 'player-shove' ||
+    draft.type === 'enemy-shove'
+  ) {
+    const saveDc = parseInteger(draft.saveDc)
+    const targetSaveModifier = parseInteger(draft.targetSaveModifier)
+    if (draft.saveDc !== '' && (saveDc === undefined || saveDc < 1))
+      errors.saveDc = 'Enter a whole number of at least 1.'
+    if (draft.useTargetSaveOverride && targetSaveModifier === undefined)
+      errors.saveModifier = 'Enter a whole number.'
+    if (Object.keys(errors).length > 0) return { errors }
+    const config: EventConfig = {
+      id: draft.id,
+      type: draft.type,
+      ...(saveDc === undefined ? {} : { saveDc }),
+      ...(draft.useTargetSaveOverride
+        ? {
+            targetSaveModifier: targetSaveModifier!,
+            targetSaveAbility: draft.targetSaveAbility,
+          }
+        : {}),
+      rollMode: draft.rollMode,
+      cover: draft.cover,
     }
     return { errors, config, result: calculateEvent(config) }
   }
@@ -1352,17 +1538,6 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
         <Shield aria-hidden="true" size={20} />
         <div className="roll-fields">
           <div className="field">
-            <label className="checkbox-field">
-              <input
-                id={`${event.id}-override-save-dc`}
-                type="checkbox"
-                checked={event.overrideSaveDc}
-                onChange={(change) =>
-                  update('overrideSaveDc', change.target.checked)
-                }
-              />
-              DC Override
-            </label>
             <label htmlFor={`${event.id}-save-dc`}>DC</label>
             <input
               id={`${event.id}-save-dc`}
@@ -1370,14 +1545,14 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
               inputMode="numeric"
               min="1"
               step="1"
-              disabled={!event.overrideSaveDc}
               value={event.saveDc}
+              placeholder="Inherited"
               aria-invalid={Boolean(errors.saveDc)}
               aria-describedby={
                 errors.saveDc ? `${event.id}-save-dc-error` : undefined
               }
               onChange={(change) => {
-                update('overrideSaveDc', true)
+                update('overrideSaveDc', change.target.value !== '')
                 update('saveDc', change.target.value)
               }}
             />
@@ -1388,25 +1563,14 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
             )}
           </div>
           <div className="field">
-            <label className="checkbox-field">
-              <input
-                id={`${event.id}-override-save-modifier`}
-                type="checkbox"
-                checked={event.overrideSaveModifier}
-                onChange={(change) =>
-                  update('overrideSaveModifier', change.target.checked)
-                }
-              />
-              Save Modifier Override
-            </label>
             <label htmlFor={`${event.id}-save-modifier`}>Save Modifier</label>
             <input
               id={`${event.id}-save-modifier`}
               type="number"
               inputMode="numeric"
               step="1"
-              disabled={!event.overrideSaveModifier}
               value={event.saveModifier}
+              placeholder="Inherited"
               aria-invalid={Boolean(errors.saveModifier)}
               aria-describedby={
                 errors.saveModifier
@@ -1414,7 +1578,7 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
                   : undefined
               }
               onChange={(change) => {
-                update('overrideSaveModifier', true)
+                update('overrideSaveModifier', change.target.value !== '')
                 update('saveModifier', change.target.value)
               }}
             />
@@ -1512,8 +1676,222 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
   )
 }
 
+function GrappleOrShoveFields({ event, errors, update }: FieldProps) {
+  if (
+    ![
+      'player-grapple',
+      'enemy-grapple',
+      'player-shove',
+      'enemy-shove',
+    ].includes(event.type)
+  )
+    return null
+  const action = event as GrappleOrShoveDraft
+  return (
+    <fieldset className="condition-section hit-save-section">
+      <legend>Target Saving Throw</legend>
+      <div className="roll-fields">
+        <div className="field">
+          <label htmlFor={`${event.id}-action-dc`}>DC</label>
+          <input
+            id={`${event.id}-action-dc`}
+            type="number"
+            placeholder="Inherited"
+            value={action.saveDc}
+            onChange={(change) => update('saveDc', change.target.value)}
+            aria-invalid={Boolean(errors.saveDc)}
+          />
+        </div>
+        <div className="field">
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={action.useTargetSaveOverride}
+              onChange={(change) =>
+                update('useTargetSaveOverride', change.target.checked)
+              }
+            />
+            Custom target save
+          </label>
+          <label htmlFor={`${event.id}-target-save`}>Modifier</label>
+          <input
+            id={`${event.id}-target-save`}
+            type="number"
+            disabled={!action.useTargetSaveOverride}
+            value={action.targetSaveModifier}
+            onChange={(change) =>
+              update('targetSaveModifier', change.target.value)
+            }
+          />
+        </div>
+        <div className="field">
+          <label htmlFor={`${event.id}-target-ability`}>Ability</label>
+          <select
+            id={`${event.id}-target-ability`}
+            disabled={!action.useTargetSaveOverride}
+            value={action.targetSaveAbility}
+            onChange={(change) =>
+              update('targetSaveAbility', change.target.value)
+            }
+          >
+            <option value="strength">STR</option>
+            <option value="dexterity">DEX</option>
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor={`${event.id}-action-roll`}>Roll Mode</label>
+          <select
+            id={`${event.id}-action-roll`}
+            value={action.rollMode}
+            onChange={(change) => update('rollMode', change.target.value)}
+          >
+            {SAVE_ROLL_MODES.map((mode) => (
+              <option key={mode.value} value={mode.value}>
+                {mode.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor={`${event.id}-action-cover`}>Cover</label>
+          <select
+            id={`${event.id}-action-cover`}
+            value={action.cover}
+            onChange={(change) => update('cover', change.target.value)}
+          >
+            {COVER_OPTIONS.map((cover) => (
+              <option key={cover.value} value={cover.value}>
+                {cover.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </fieldset>
+  )
+}
+
+function HitSaveFields({ event, errors, update }: FieldProps) {
+  if (!isAttackDraft(event)) return null
+  return (
+    <fieldset className="roll-section">
+      <legend>Saving Throw on Hit</legend>
+      <label className="checkbox-field">
+        <input
+          id={`${event.id}-hit-save-enabled`}
+          type="checkbox"
+          checked={event.hitSaveEnabled}
+          onChange={(change) => update('hitSaveEnabled', change.target.checked)}
+        />
+        Resolve a saving throw after a hit
+      </label>
+      {event.hitSaveEnabled && (
+        <div className="hit-save-details">
+          <div className="roll-fields">
+            <div className="field">
+              <label htmlFor={`${event.id}-hit-save-dc`}>DC</label>
+              <input
+                id={`${event.id}-hit-save-dc`}
+                type="number"
+                min="1"
+                placeholder="Inherited"
+                value={event.hitSaveDc}
+                aria-invalid={Boolean(errors.saveDc)}
+                onChange={(change) => update('hitSaveDc', change.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={`${event.id}-hit-save-modifier`}>
+                Save Modifier
+              </label>
+              <input
+                id={`${event.id}-hit-save-modifier`}
+                type="number"
+                placeholder="Inherited"
+                value={event.hitSaveModifier}
+                aria-invalid={Boolean(errors.saveModifier)}
+                onChange={(change) =>
+                  update('hitSaveModifier', change.target.value)
+                }
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={`${event.id}-hit-save-ability`}>Ability</label>
+              <select
+                id={`${event.id}-hit-save-ability`}
+                value={event.hitSaveAbility}
+                onChange={(change) =>
+                  update('hitSaveAbility', change.target.value)
+                }
+              >
+                {ABILITIES.map((ability) => (
+                  <option key={ability.value} value={ability.value}>
+                    {ability.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor={`${event.id}-hit-save-roll-mode`}>
+                Roll Mode
+              </label>
+              <select
+                id={`${event.id}-hit-save-roll-mode`}
+                value={event.hitSaveRollMode}
+                onChange={(change) =>
+                  update('hitSaveRollMode', change.target.value)
+                }
+              >
+                {SAVE_ROLL_MODES.map((mode) => (
+                  <option key={mode.value} value={mode.value}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor={`${event.id}-hit-save-cover`}>Cover</label>
+              <select
+                id={`${event.id}-hit-save-cover`}
+                value={event.hitSaveCover}
+                onChange={(change) =>
+                  update('hitSaveCover', change.target.value)
+                }
+              >
+                {COVER_OPTIONS.map((cover) => (
+                  <option key={cover.value} value={cover.value}>
+                    {cover.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="condition-groups">
+            <ConditionChoices
+              id={`${event.id}-hit-save-failure`}
+              field="hitSaveFailureConditions"
+              label="On save failure"
+              selected={event.hitSaveFailureConditions}
+              update={update}
+            />
+            <ConditionChoices
+              id={`${event.id}-hit-save-success`}
+              field="hitSaveSuccessConditions"
+              label="On save success"
+              selected={event.hitSaveSuccessConditions}
+              update={update}
+            />
+          </div>
+        </div>
+      )}
+    </fieldset>
+  )
+}
+
 type ConditionField =
   | 'hitConditions'
+  | 'hitSaveFailureConditions'
+  | 'hitSaveSuccessConditions'
   | 'failureConditions'
   | 'successConditions'
   | 'conditions'
@@ -1664,17 +2042,75 @@ function ConditionRemovalChoices({
     <ConditionPicker
       id={`${id}-picker`}
       label={label}
-      options={[
-        ...CONDITION_OPTIONS,
-        { value: 'vex' as const, label: CONDITION_LABELS.vex },
-        { value: 'sap' as const, label: CONDITION_LABELS.sap },
-        { value: 'exhaustion' as const, label: CONDITION_LABELS.exhaustion },
-      ]}
+      options={STATE_CONDITION_OPTIONS}
       selected={selectedValues}
       onChange={(values) => onChange(values.map((type) => ({ type })))}
       closeOnSelect
       removeLabel={(option) => `Remove ${option.label} ${label.toLowerCase()}`}
     />
+  )
+}
+
+function ConditionalFields({
+  event,
+  update,
+  addChild,
+}: Omit<FieldProps, 'errors'> & { addChild: (type: EventType) => void }) {
+  if (event.type !== 'conditional') return null
+  return (
+    <fieldset className="condition-section">
+      <legend>Only when state matches</legend>
+      <div className="field">
+        <label htmlFor={`${event.id}-conditional-target`}>
+          Inspect combatant
+        </label>
+        <select
+          id={`${event.id}-conditional-target`}
+          value={event.target}
+          onChange={(change) => update('target', change.target.value)}
+        >
+          <option value="player">Player</option>
+          <option value="enemy">Enemy</option>
+        </select>
+      </div>
+      <div className="condition-groups">
+        <ConditionRemovalChoices
+          id={`${event.id}-must-have`}
+          label="Must have (all)"
+          selected={event.mustHave}
+          onChange={(mustHave) => update('mustHave', mustHave)}
+        />
+        <ConditionRemovalChoices
+          id={`${event.id}-must-not-have`}
+          label="Must not have (all)"
+          selected={event.mustNotHave}
+          onChange={(mustNotHave) => update('mustNotHave', mustNotHave)}
+        />
+      </div>
+      <div className="nested-events" aria-label="Conditional events">
+        <strong>Then run, in order</strong>
+        {event.events.length === 0 ? (
+          <p className="empty-state">No child events yet.</p>
+        ) : (
+          <ol>
+            {event.events.map((child) => (
+              <li key={child.id}>{EVENT_LABELS[child.type]}</li>
+            ))}
+          </ol>
+        )}
+        <div className="event-type-buttons">
+          <button type="button" onClick={() => addChild('player-attack')}>
+            Add player attack
+          </button>
+          <button type="button" onClick={() => addChild('player-grapple')}>
+            Add grapple
+          </button>
+          <button type="button" onClick={() => addChild('player-shove')}>
+            Add shove
+          </button>
+        </div>
+      </div>
+    </fieldset>
   )
 }
 
@@ -1979,7 +2415,12 @@ function configuredConditionTotals(
 }
 
 function eventConditionConfigs(event: EventDraft): readonly ConditionConfig[] {
-  if (isAttackDraft(event)) return event.hitConditions
+  if (isAttackDraft(event))
+    return [
+      ...event.hitConditions,
+      ...event.hitSaveFailureConditions,
+      ...event.hitSaveSuccessConditions,
+    ]
   if (isSavingThrowDraft(event) || isAbilityCheckDraft(event)) {
     return [...event.failureConditions, ...event.successConditions]
   }
@@ -2107,9 +2548,15 @@ function prepareSequence(draft: ScenarioDraft) {
               id: activity.id,
               type: activity.type,
               owner: activity.owner,
-              events: activity.events.map(
-                (event) => evaluations.get(event.id)!.config!,
-              ),
+              ...(activity.conditionGate
+                ? { conditionGate: activity.conditionGate }
+                : {}),
+              events: activity.events.map((event) => ({
+                ...evaluations.get(event.id)!.config!,
+                ...(event.conditionGate
+                  ? { conditionGate: event.conditionGate }
+                  : {}),
+              })),
             })),
           })),
         })),
@@ -2714,15 +3161,91 @@ function EventTypeButtons({
 }: {
   onSelect: (type: EventType) => void
 }) {
-  return (Object.keys(EVENT_LABELS) as EventType[]).map((type) => {
-    const Icon = EVENT_ICONS[type]
-    return (
-      <button key={type} type="button" onClick={() => onSelect(type)}>
-        <Icon aria-hidden="true" size={18} />
-        {EVENT_LABELS[type]}
-      </button>
-    )
-  })
+  return (Object.keys(EVENT_LABELS) as EventType[])
+    .filter((type) => type !== 'conditional')
+    .map((type) => {
+      const Icon = EVENT_ICONS[type]
+      return (
+        <button key={type} type="button" onClick={() => onSelect(type)}>
+          <Icon aria-hidden="true" size={18} />
+          {EVENT_LABELS[type]}
+        </button>
+      )
+    })
+}
+
+function conditionGateSummary(gate: ConditionGateDraft) {
+  const labels = (items: readonly ConditionRemovalConfig[]) =>
+    items.map((item) => CONDITION_LABELS[item.type].toLowerCase())
+  return [
+    ...labels(gate.mustHave),
+    ...labels(gate.mustNotHave).map((label) => `not ${label}`),
+  ].join(' and ')
+}
+
+function ConditionGateModal({
+  initial,
+  onSave,
+  onClose,
+}: {
+  initial?: ConditionGateDraft
+  onSave: (gate: ConditionGateDraft) => void
+  onClose: () => void
+}) {
+  const [gate, setGate] = useState<ConditionGateDraft>(
+    initial ?? { target: 'enemy', mustHave: [], mustNotHave: [] },
+  )
+  return (
+    <div className="condition-modal-backdrop" role="presentation">
+      <section
+        className="condition-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="condition-modal-title"
+      >
+        <h2 id="condition-modal-title">Condition</h2>
+        <p>
+          Run this section only when the selected combatant’s state matches.
+        </p>
+        <label className="field">
+          Inspect combatant
+          <select
+            value={gate.target}
+            onChange={(event) =>
+              setGate({ ...gate, target: event.target.value as Combatant })
+            }
+          >
+            <option value="player">Player</option>
+            <option value="enemy">Enemy</option>
+          </select>
+        </label>
+        <ConditionRemovalChoices
+          id="modal-must-have"
+          label="Must have (all)"
+          selected={gate.mustHave}
+          onChange={(mustHave) => setGate({ ...gate, mustHave })}
+        />
+        <ConditionRemovalChoices
+          id="modal-must-not-have"
+          label="Must not have (all)"
+          selected={gate.mustNotHave}
+          onChange={(mustNotHave) => setGate({ ...gate, mustNotHave })}
+        />
+        <div className="modal-actions">
+          <button type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={gate.mustHave.length + gate.mustNotHave.length === 0}
+            onClick={() => onSave(gate)}
+          >
+            Save condition
+          </button>
+        </div>
+      </section>
+    </div>
+  )
 }
 
 const GENERATED_RESULT_LABELS: Record<GeneratedBoundaryResult['type'], string> =
@@ -3168,6 +3691,19 @@ function App() {
   >()
   const [dragOverEventId, setDragOverEventId] = useState<string>()
   const [reorderAnnouncement, setReorderAnnouncement] = useState('')
+  const [conditionEditor, setConditionEditor] = useState<
+    | {
+        readonly kind: 'event'
+        readonly path: ActivityPath
+        readonly id: string
+        readonly gate?: ConditionGateDraft
+      }
+    | {
+        readonly kind: 'activity'
+        readonly path: ActivityPath
+        readonly gate?: ConditionGateDraft
+      }
+  >()
   const nextRoundId = useRef(2)
   const nextTurnId = useRef(2)
   const nextActivityId = useRef(2)
@@ -3181,6 +3717,15 @@ function App() {
       // Storage can be unavailable (private browsing or a full quota).
     }
   }, [profiles])
+
+  useEffect(() => {
+    if (!conditionEditor) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [conditionEditor])
 
   function updateState(combatant: Combatant, change: Partial<StateDraft>) {
     setStateDrafts((current) => ({
@@ -3222,6 +3767,14 @@ function App() {
   }
 
   function resyncIds(draft: ScenarioDraft) {
+    const nestedEvents = (
+      events: readonly EventDraft[],
+    ): readonly EventDraft[] =>
+      events.flatMap((event) =>
+        event.type === 'conditional'
+          ? [event, ...nestedEvents(event.events)]
+          : [event],
+      )
     const highest = (prefix: string) => {
       const ids = [
         ...draft.rounds.map((round) => round.id),
@@ -3230,7 +3783,7 @@ function App() {
           round.turns.flatMap((turn) =>
             turn.activities.flatMap((activity) => [
               activity.id,
-              ...activity.events.flatMap((event) => [
+              ...nestedEvents(activity.events).flatMap((event) => [
                 event.id,
                 ...event.damagePools.map((pool) => pool.id),
               ]),
@@ -3360,7 +3913,7 @@ function App() {
     path: ActivityPath,
     id: string,
     field: EventField,
-    value: EventFieldValue,
+    value: EventFieldValue | undefined,
   ) {
     updateActivity(path, (activity) => ({
       ...activity,
@@ -3368,6 +3921,24 @@ function App() {
         event.id === id ? ({ ...event, [field]: value } as EventDraft) : event,
       ),
     }))
+  }
+
+  function saveConditionGate(gate: ConditionGateDraft) {
+    if (!conditionEditor) return
+    if (conditionEditor.kind === 'event') {
+      updateEvent(
+        conditionEditor.path,
+        conditionEditor.id,
+        'conditionGate' as EventField,
+        gate as EventFieldValue,
+      )
+    } else {
+      updateActivity(conditionEditor.path, (activity) => ({
+        ...activity,
+        conditionGate: gate,
+      }))
+    }
+    setConditionEditor(undefined)
   }
 
   function updateDamagePool(
@@ -3951,8 +4522,53 @@ function App() {
                                           ? 'Bonus action'
                                           : 'Turn timeline'}
                                     </h5>
+                                    {activity.conditionGate && (
+                                      <span className="condition-gate-tag">
+                                        {conditionGateSummary(
+                                          activity.conditionGate,
+                                        )}
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="event-actions">
+                                    {(activity.type === 'action' ||
+                                      activity.type === 'bonus-action') && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          className="condition-gate-button"
+                                          onClick={() =>
+                                            setConditionEditor({
+                                              kind: 'activity',
+                                              path,
+                                              gate: activity.conditionGate,
+                                            })
+                                          }
+                                        >
+                                          {activity.conditionGate
+                                            ? 'Edit condition'
+                                            : 'Add sequence condition'}
+                                        </button>
+                                        {activity.conditionGate && (
+                                          <button
+                                            type="button"
+                                            className="condition-gate-button"
+                                            aria-label="Remove activity condition"
+                                            onClick={() =>
+                                              updateActivity(
+                                                path,
+                                                (current) => ({
+                                                  ...current,
+                                                  conditionGate: undefined,
+                                                }),
+                                              )
+                                            }
+                                          >
+                                            Remove condition
+                                          </button>
+                                        )}
+                                      </>
+                                    )}
                                     <button
                                       className="icon-button"
                                       type="button"
@@ -4106,8 +4722,48 @@ function App() {
                                               <h6 id={`${event.id}-title`}>
                                                 {EVENT_LABELS[event.type]}
                                               </h6>
+                                              {event.conditionGate && (
+                                                <span className="condition-gate-tag">
+                                                  {conditionGateSummary(
+                                                    event.conditionGate,
+                                                  )}
+                                                </span>
+                                              )}
                                             </div>
                                             <div className="event-actions">
+                                              <button
+                                                type="button"
+                                                className="condition-gate-button"
+                                                onClick={() =>
+                                                  setConditionEditor({
+                                                    kind: 'event',
+                                                    path,
+                                                    id: event.id,
+                                                    gate: event.conditionGate,
+                                                  })
+                                                }
+                                              >
+                                                {event.conditionGate
+                                                  ? 'Edit condition'
+                                                  : 'Add sequence condition'}
+                                              </button>
+                                              {event.conditionGate && (
+                                                <button
+                                                  type="button"
+                                                  className="condition-gate-button"
+                                                  aria-label={`Remove condition from ${EVENT_LABELS[event.type]}`}
+                                                  onClick={() =>
+                                                    updateEvent(
+                                                      path,
+                                                      event.id,
+                                                      'conditionGate',
+                                                      undefined,
+                                                    )
+                                                  }
+                                                >
+                                                  Remove condition
+                                                </button>
+                                              )}
                                               <button
                                                 className="drag-handle"
                                                 type="button"
@@ -4238,6 +4894,18 @@ function App() {
                                                 }
                                               />
                                             ) : null}
+                                            <GrappleOrShoveFields
+                                              event={event}
+                                              errors={evaluation.errors}
+                                              update={(field, value) =>
+                                                updateEvent(
+                                                  path,
+                                                  event.id,
+                                                  field,
+                                                  value,
+                                                )
+                                              }
+                                            />
                                             <AbilityCheckFields
                                               event={event}
                                               errors={evaluation.errors}
@@ -4272,6 +4940,35 @@ function App() {
                                                   value,
                                                 )
                                               }
+                                            />
+                                            <ConditionalFields
+                                              event={event}
+                                              update={(field, value) =>
+                                                updateEvent(
+                                                  path,
+                                                  event.id,
+                                                  field,
+                                                  value,
+                                                )
+                                              }
+                                              addChild={(type) => {
+                                                if (
+                                                  event.type !== 'conditional'
+                                                )
+                                                  return
+                                                updateEvent(
+                                                  path,
+                                                  event.id,
+                                                  'events',
+                                                  [
+                                                    ...event.events,
+                                                    createEvent(
+                                                      type,
+                                                      createEventId(),
+                                                    ),
+                                                  ],
+                                                )
+                                              }}
                                             />
                                             <DamageFields
                                               event={event}
@@ -4332,6 +5029,19 @@ function App() {
                                               }
                                             />
                                           </div>
+
+                                          <HitSaveFields
+                                            event={event}
+                                            errors={evaluation.errors}
+                                            update={(field, value) =>
+                                              updateEvent(
+                                                path,
+                                                event.id,
+                                                field,
+                                                value,
+                                              )
+                                            }
+                                          />
 
                                           <div
                                             className="attack-results"
@@ -4679,6 +5389,13 @@ function App() {
         </>
       ) : (
         <SequenceEvaluator profiles={profiles} />
+      )}
+      {conditionEditor && (
+        <ConditionGateModal
+          initial={conditionEditor.gate}
+          onSave={saveConditionGate}
+          onClose={() => setConditionEditor(undefined)}
+        />
       )}
     </main>
   )

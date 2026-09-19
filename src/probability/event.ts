@@ -99,6 +99,14 @@ export type HeroicInspirationPolicy =
 interface BaseEventConfig {
   readonly id: string
   readonly heroicInspiration?: HeroicInspirationPolicy
+  /** Optional state gate evaluated before this event resolves. */
+  readonly conditionGate?: ConditionGateConfig
+}
+
+export interface ConditionGateConfig {
+  readonly target: Combatant
+  readonly mustHave: readonly ConditionRemovalConfig[]
+  readonly mustNotHave: readonly ConditionRemovalConfig[]
 }
 
 interface DamageEventConfig extends BaseEventConfig, DamageRollConfig {}
@@ -110,6 +118,8 @@ interface BaseAttackConfig extends DamageEventConfig {
   readonly rollMode: AttackRollMode
   readonly cover: Cover
   readonly hitConditions: readonly ConditionConfig[]
+  /** Resolved after a successful attack, in addition to direct hit conditions. */
+  readonly hitSave?: ConditionOnlySaveConfig
 }
 
 export interface PlayerAttackConfig extends BaseAttackConfig {
@@ -121,6 +131,17 @@ export interface EnemyAttackConfig extends BaseAttackConfig {
 }
 
 export type AttackConfig = PlayerAttackConfig | EnemyAttackConfig
+
+/** A save which changes state but never deals damage. */
+export interface ConditionOnlySaveConfig {
+  readonly saveDc?: number
+  readonly saveModifier?: number
+  readonly saveAbility: Ability
+  readonly rollMode: SavingThrowRollMode
+  readonly cover: Cover
+  readonly failureConditions: readonly ConditionConfig[]
+  readonly successConditions: readonly ConditionConfig[]
+}
 
 interface BaseSavingThrowConfig extends DamageEventConfig {
   /** Omit to use the source's / target's combatant-state default. */
@@ -144,6 +165,42 @@ export interface EnemySavingThrowConfig extends BaseSavingThrowConfig {
 }
 
 export type SavingThrowConfig = PlayerSavingThrowConfig | EnemySavingThrowConfig
+
+interface BaseGrappleOrShoveConfig extends BaseEventConfig {
+  /** Omit to use the acting combatant's save DC. */
+  readonly saveDc?: number
+  /** Supplying a modifier also requires specifying the ability it represents. */
+  readonly targetSaveModifier?: number
+  readonly targetSaveAbility?: 'strength' | 'dexterity'
+  readonly rollMode: SavingThrowRollMode
+  readonly cover: Cover
+}
+export interface PlayerGrappleConfig extends BaseGrappleOrShoveConfig {
+  readonly type: 'player-grapple'
+}
+export interface EnemyGrappleConfig extends BaseGrappleOrShoveConfig {
+  readonly type: 'enemy-grapple'
+}
+export interface PlayerShoveConfig extends BaseGrappleOrShoveConfig {
+  readonly type: 'player-shove'
+}
+export interface EnemyShoveConfig extends BaseGrappleOrShoveConfig {
+  readonly type: 'enemy-shove'
+}
+export type GrappleOrShoveConfig =
+  | PlayerGrappleConfig
+  | EnemyGrappleConfig
+  | PlayerShoveConfig
+  | EnemyShoveConfig
+
+/** Executes child events only in branches matching all requested state tests. */
+export interface ConditionalEventConfig extends BaseEventConfig {
+  readonly type: 'conditional'
+  readonly target: Combatant
+  readonly mustHave: readonly ConditionRemovalConfig[]
+  readonly mustNotHave: readonly ConditionRemovalConfig[]
+  readonly events: readonly EventConfig[]
+}
 
 export interface ConditionRemovalConfig {
   readonly type: ConditionType
@@ -254,6 +311,8 @@ export interface StopConcentrationConfig extends BaseEventConfig {
 export type EventConfig =
   | AttackConfig
   | SavingThrowConfig
+  | GrappleOrShoveConfig
+  | ConditionalEventConfig
   | AbilityCheckConfig
   | InitiativeConfig
   | StandaloneDamageConfig
@@ -304,6 +363,7 @@ export interface ActivityConfig {
   readonly id: string
   readonly type: ActivityType
   readonly owner: Combatant
+  readonly conditionGate?: ConditionGateConfig
   readonly events: readonly EventConfig[]
 }
 
@@ -1367,6 +1427,10 @@ export function eventUsesActivityResource(config: EventConfig): boolean {
   switch (config.type) {
     case 'player-attack':
     case 'enemy-attack':
+    case 'player-grapple':
+    case 'enemy-grapple':
+    case 'player-shove':
+    case 'enemy-shove':
     case 'player-ability-check':
     case 'enemy-ability-check':
     case 'grappled-escape':
@@ -1385,8 +1449,47 @@ export function eventUsesActivityResource(config: EventConfig): boolean {
     case 'remove-condition':
     case 'remove-effect':
     case 'stop-concentration':
+    case 'conditional':
       return false
   }
+}
+
+function stateHasRequirement(
+  state: CombatantState,
+  requirement: ConditionRemovalConfig,
+): boolean {
+  if (
+    requirement.type === 'vex' ||
+    requirement.type === 'sap' ||
+    requirement.type === 'dodging'
+  )
+    return state[requirement.type]
+  if (requirement.type === 'exhaustion') return state.exhaustion > 0
+  return hasEffectiveCondition(
+    state.conditions,
+    requirement.type as PersistentConditionType,
+  )
+}
+
+function conditionGateMatches(
+  config: ConditionGateConfig,
+  state: SequenceState,
+): boolean {
+  assertCombatant(config.target, 'Conditional target')
+  validateConditionRemovals(config.mustHave)
+  validateConditionRemovals(config.mustNotHave)
+  const target = state[config.target]
+  return (
+    config.mustHave.every((item) => stateHasRequirement(target, item)) &&
+    config.mustNotHave.every((item) => !stateHasRequirement(target, item))
+  )
+}
+
+function conditionalMatches(
+  config: ConditionalEventConfig,
+  state: SequenceState,
+) {
+  return conditionGateMatches(config, state)
 }
 
 function normalizePersistentConditions(
@@ -1579,31 +1682,62 @@ function attackTransitions(
         `${config.id}:hit`,
         config.hitConditions,
       )
-      return damageDistribution(
-        config,
-        stateAfterD20[target],
-        'full',
-        critical ? 2 : 1,
-        stateAfterD20[attacker].heroicInspiration,
-      ).flatMap(
-        (damage) =>
-          concentrationAfterDamage(
-            spendInspiration(
+      const hitSave =
+        config.hitSave === undefined
+          ? Distribution.constant(
+              {
+                state: application.state,
+                appliedConditions: application.appliedConditions,
+              },
+              (value) => stateKey(value.state),
+            )
+          : conditionOnlySaveTransitions(
+              config.hitSave,
               application.state,
+              target,
               attacker,
-              damage.inspirationSpent,
-            ),
-            target,
-            damage.damage,
-          ).map(
-            (concentration) => ({
-              state: concentration.state,
-              executed: true,
-              success: true,
-              critical,
-              exactDamage: damage.damage,
-              appliedConditions: application.appliedConditions,
-            }),
+              `${config.id}:hit-save`,
+            ).map(
+              (transition) => ({
+                state: transition.state,
+                appliedConditions: [
+                  ...application.appliedConditions,
+                  ...transition.appliedConditions,
+                ],
+              }),
+              (value) => stateKey(value.state),
+            )
+      return hitSave.flatMap(
+        (saved) =>
+          damageDistribution(
+            config,
+            // Hit-triggered state changes occur after this attack's damage,
+            // matching the existing direct on-hit condition timing.
+            stateAfterD20[target],
+            'full',
+            critical ? 2 : 1,
+            stateAfterD20[attacker].heroicInspiration,
+          ).flatMap(
+            (damage) =>
+              concentrationAfterDamage(
+                spendInspiration(
+                  saved.state,
+                  attacker,
+                  damage.inspirationSpent,
+                ),
+                target,
+                damage.damage,
+              ).map(
+                (concentration) => ({
+                  state: concentration.state,
+                  executed: true,
+                  success: true,
+                  critical,
+                  exactDamage: damage.damage,
+                  appliedConditions: saved.appliedConditions,
+                }),
+                transitionKey,
+              ),
             transitionKey,
           ),
         transitionKey,
@@ -1731,6 +1865,199 @@ function savingThrowTransitions(
       )
     }, transitionKey)
   }, transitionKey)
+}
+
+function conditionOnlySaveTransitions(
+  config: ConditionOnlySaveConfig,
+  state: SequenceState,
+  target: Combatant,
+  source: Combatant,
+  id: string,
+): Distribution<EventTransition> {
+  const saveDc = config.saveDc ?? state[source].saveDc ?? 12
+  const saveModifier =
+    config.saveModifier ??
+    state[target].saveModifiers?.[config.saveAbility] ??
+    0
+  assertInteger(saveDc, 'Save DC', 1)
+  assertInteger(saveModifier, 'Save modifier')
+  if (!ABILITIES.includes(config.saveAbility))
+    throw new RangeError('Saving throw ability is invalid')
+  if (!SAVE_ROLL_MODES.includes(config.rollMode))
+    throw new RangeError('Saving throw roll mode is invalid')
+  if (!COVER_TYPES.includes(config.cover))
+    throw new RangeError('Cover must be none, half, or three-quarters')
+  validateConditions(config.failureConditions)
+  validateConditions(config.successConditions)
+  const automaticFailure = config.rollMode === 'automatic-failure'
+  const effects = conditionRollEffects(
+    state[target].conditions,
+    'saving-throw',
+    config.saveAbility,
+  )
+  const mode = automaticFailure
+    ? 'normal'
+    : effectiveRollMode(
+        config.rollMode,
+        effects.advantage,
+        effects.disadvantage,
+      )
+  const saveMode = effectiveRollMode(
+    mode,
+    config.saveAbility === 'dexterity' && isDodgeActive(state, target)
+      ? ['dodge']
+      : [],
+    [],
+  )
+  const bonus =
+    config.saveAbility === 'dexterity' ? coverBonus(config.cover) : 0
+  const succeeds = (roll: number) =>
+    roll + saveModifier + bonus - state[target].exhaustion * 2 >= saveDc
+  const rolls = automaticFailure
+    ? Distribution.constant<readonly number[]>([0], (v) => v.join(','))
+    : d20Rolls(saveMode)
+  return rolls.map((values) => {
+    const roll = automaticFailure ? 0 : selectedD20(values, saveMode)
+    const success =
+      !automaticFailure && !effects.automaticFailure && succeeds(roll)
+    const applied = applyConditionConfigs(
+      state,
+      target,
+      source,
+      `${id}:${success ? 'success' : 'failure'}`,
+      success ? config.successConditions : config.failureConditions,
+    )
+    return {
+      state: applied.state,
+      executed: true,
+      success,
+      critical: false,
+      exactDamage: 0,
+      appliedConditions: applied.appliedConditions,
+    }
+  }, transitionKey)
+}
+
+function grappleOrShoveTransitions(
+  config: GrappleOrShoveConfig,
+  state: SequenceState,
+): Distribution<EventTransition> {
+  const actor: Combatant = config.type.startsWith('player-')
+    ? 'player'
+    : 'enemy'
+  const target: Combatant = actor === 'player' ? 'enemy' : 'player'
+  if (
+    (config.targetSaveModifier === undefined) !==
+    (config.targetSaveAbility === undefined)
+  ) {
+    throw new RangeError(
+      'Custom target save requires both an ability and modifier',
+    )
+  }
+  const ability =
+    config.targetSaveAbility ??
+    ((state[target].saveModifiers?.strength ?? 0) >=
+    (state[target].saveModifiers?.dexterity ?? 0)
+      ? 'strength'
+      : 'dexterity')
+  const modifier =
+    config.targetSaveModifier ?? state[target].saveModifiers?.[ability] ?? 0
+  const condition: ConditionType = config.type.endsWith('grapple')
+    ? 'grappled'
+    : 'prone'
+  return conditionOnlySaveTransitions(
+    {
+      saveDc: config.saveDc,
+      saveModifier: modifier,
+      saveAbility: ability,
+      rollMode: config.rollMode,
+      cover: config.cover,
+      failureConditions: [{ type: condition }],
+      successConditions: [],
+    },
+    state,
+    target,
+    actor,
+    config.id,
+  )
+}
+
+function conditionalTransitions(
+  config: ConditionalEventConfig,
+  state: SequenceState,
+): Distribution<EventTransition> {
+  if (!conditionalMatches(config, state)) {
+    return Distribution.constant(
+      {
+        state,
+        executed: false,
+        success: false,
+        critical: false,
+        exactDamage: 0,
+        appliedConditions: [],
+      },
+      transitionKey,
+    )
+  }
+  let states = Distribution.constant(state, stateKey)
+  for (const child of config.events) {
+    states = states.flatMap((current) => {
+      const actor = eventActor(child)
+      const transitions =
+        eventUsesActivityResource(child) &&
+        actor !== undefined &&
+        !canExecuteActivity(current, actor)
+          ? Distribution.constant(
+              {
+                state: current,
+                executed: false,
+                success: false,
+                critical: false,
+                exactDamage: 0,
+                appliedConditions: [],
+              },
+              transitionKey,
+            )
+          : eventTransitions(child, current)
+      return transitions.map((transition) => transition.state, stateKey)
+    }, stateKey)
+  }
+  return states.map(
+    (next) => ({
+      state: next,
+      executed: true,
+      success: true,
+      critical: false,
+      exactDamage: 0,
+      appliedConditions: [],
+    }),
+    transitionKey,
+  )
+}
+
+function eventActor(config: EventConfig): Combatant | undefined {
+  switch (config.type) {
+    case 'player-attack':
+    case 'player-grapple':
+    case 'player-shove':
+    case 'player-ability-check':
+      return 'player'
+    case 'enemy-attack':
+    case 'enemy-grapple':
+    case 'enemy-shove':
+    case 'enemy-ability-check':
+      return 'enemy'
+    case 'grappled-escape':
+    case 'help':
+    case 'dodge':
+    case 'start-concentration':
+      return config.owner
+    case 'apply-condition':
+    case 'apply-effect':
+      return config.source
+    default:
+      return undefined
+  }
 }
 
 function abilityCheckTransitions(
@@ -2037,10 +2364,33 @@ function stateEventTransitions(
 }
 
 function eventTransitions(config: EventConfig, state: SequenceState) {
+  if (
+    config.conditionGate !== undefined &&
+    !conditionGateMatches(config.conditionGate, state)
+  ) {
+    return Distribution.constant(
+      {
+        state,
+        executed: false,
+        success: false,
+        critical: false,
+        exactDamage: 0,
+        appliedConditions: [],
+      },
+      transitionKey,
+    )
+  }
   switch (config.type) {
     case 'player-attack':
     case 'enemy-attack':
       return attackTransitions(config, state)
+    case 'player-grapple':
+    case 'enemy-grapple':
+    case 'player-shove':
+    case 'enemy-shove':
+      return grappleOrShoveTransitions(config, state)
+    case 'conditional':
+      return conditionalTransitions(config, state)
     case 'player-saving-throw':
     case 'enemy-saving-throw':
       return savingThrowTransitions(config, state)
@@ -2067,12 +2417,27 @@ function eventTransitions(config: EventConfig, state: SequenceState) {
   }
 }
 
-function configuredConditions(config: EventConfig) {
+function configuredConditions(config: EventConfig): readonly ConditionType[] {
   const conditions = (() => {
     switch (config.type) {
       case 'player-attack':
       case 'enemy-attack':
-        return config.hitConditions
+        return [
+          ...config.hitConditions,
+          ...(config.hitSave
+            ? [
+                ...config.hitSave.failureConditions,
+                ...config.hitSave.successConditions,
+              ]
+            : []),
+        ]
+      case 'player-grapple':
+        return [{ type: 'grappled' }]
+      case 'enemy-grapple':
+        return [{ type: 'grappled' }]
+      case 'player-shove':
+      case 'enemy-shove':
+        return [{ type: 'prone' }]
       case 'player-saving-throw':
       case 'enemy-saving-throw':
         return [...config.failureConditions, ...config.successConditions]
@@ -2091,7 +2456,9 @@ function configuredConditions(config: EventConfig) {
         return []
     }
   })()
-  return [...new Set(conditions.map((condition) => condition.type))]
+  return [
+    ...new Set(conditions.map((condition) => condition.type)),
+  ] as readonly ConditionType[]
 }
 
 function eventTarget(config: EventConfig): ConditionTarget | undefined {
@@ -2099,10 +2466,14 @@ function eventTarget(config: EventConfig): ConditionTarget | undefined {
     case 'player-attack':
     case 'enemy-saving-throw':
     case 'enemy-damage':
+    case 'player-grapple':
+    case 'player-shove':
       return 'enemies'
     case 'enemy-attack':
     case 'player-saving-throw':
     case 'player-damage':
+    case 'enemy-grapple':
+    case 'enemy-shove':
       return 'players'
     case 'apply-condition':
     case 'apply-effect':
@@ -2125,6 +2496,10 @@ function producesDamage(config: EventConfig) {
   return (
     config.type === 'player-attack' ||
     config.type === 'enemy-attack' ||
+    config.type === 'player-grapple' ||
+    config.type === 'enemy-grapple' ||
+    config.type === 'player-shove' ||
+    config.type === 'enemy-shove' ||
     config.type === 'player-saving-throw' ||
     config.type === 'enemy-saving-throw' ||
     config.type === 'player-damage' ||
@@ -2575,6 +2950,15 @@ function assertUniqueId(id: string, kind: string, ids: Set<string>) {
 
 function validateSequence(config: SequenceConfig) {
   const ids = new Set<string>()
+  const validateChildren = (events: readonly EventConfig[]) => {
+    for (const event of events) {
+      assertUniqueId(event.id, 'Event', ids)
+      // calculateEvent performs the event-specific validation without changing
+      // sequence state; doing it here also validates action/save overrides.
+      calculateEvent(event)
+      if (event.type === 'conditional') validateChildren(event.events)
+    }
+  }
   validateCombatantState(config.initialState.player, 'player', ids)
   validateCombatantState(config.initialState.enemy, 'enemy', ids)
   for (const round of config.rounds) {
@@ -2638,6 +3022,11 @@ function validateSequence(config: SequenceConfig) {
               assertUniqueId(conditionId, 'Condition instance', ids)
             })
           }
+          if (event.type === 'conditional') {
+            validateConditionRemovals(event.mustHave)
+            validateConditionRemovals(event.mustNotHave)
+            validateChildren(event.events)
+          }
         }
       }
     }
@@ -2656,6 +3045,62 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
   const weightedGeneratedResults: WeightedGeneratedResult[] = []
   const enemyDamageByRound: number[] = []
   let currentRoundEnemyDamage = 0
+
+  // Conditional children are results in their own right.  Their transition is
+  // explicitly gated per incoming branch, so a skipped child contributes a
+  // zero execution probability rather than disappearing from the report.
+  const collectConditionalResults = (
+    conditional: ConditionalEventConfig,
+    before: Distribution<SequenceState>,
+  ) => {
+    for (const child of conditional.events) {
+      const transitions = before.flatMap(
+        (state) =>
+          conditionalMatches(conditional, state)
+            ? eventTransitions(child, state)
+            : Distribution.constant(
+                {
+                  state,
+                  executed: false,
+                  success: false,
+                  critical: false,
+                  exactDamage: 0,
+                  appliedConditions: [],
+                },
+                transitionKey,
+              ),
+        transitionKey,
+      )
+      const result = resultFromTransitions(child, transitions, before)
+      eventResults[child.id] = result
+      if (
+        result.outcome.type === 'expected-damage-against-enemies' ||
+        result.outcome.type === 'expected-damage-against-players'
+      ) {
+        totals.set(
+          result.outcome.type,
+          (totals.get(result.outcome.type) ?? 0) +
+            result.outcome.expectedDamage,
+        )
+        if (result.outcome.type === 'expected-damage-against-enemies') {
+          currentRoundEnemyDamage += result.outcome.expectedDamage
+        }
+      }
+      const target = eventTarget(child)
+      for (const application of result.conditionApplications) {
+        if (target === undefined) continue
+        const key = `${application.condition}:${target}`
+        const current = conditionTotals.get(key)
+        conditionTotals.set(key, {
+          condition: application.condition,
+          target,
+          expectedApplications:
+            (current?.expectedApplications ?? 0) + application.probability,
+        })
+      }
+      if (child.type === 'conditional') collectConditionalResults(child, before)
+    }
+  }
 
   const collectBoundary = (
     boundaryDistribution: Distribution<BoundaryTransition>,
@@ -2700,10 +3145,9 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
         for (const event of activity.events) {
           const transitions = states.flatMap(
             (state) =>
-              !eventUsesActivityResource(event) ||
-              canExecuteActivity(state, activity.owner)
-                ? eventTransitions(event, state)
-                : Distribution.constant(
+              activity.conditionGate !== undefined &&
+              !conditionGateMatches(activity.conditionGate, state)
+                ? Distribution.constant(
                     {
                       state,
                       executed: false,
@@ -2713,11 +3157,27 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
                       appliedConditions: [],
                     },
                     transitionKey,
-                  ),
+                  )
+                : !eventUsesActivityResource(event) ||
+                    canExecuteActivity(state, activity.owner)
+                  ? eventTransitions(event, state)
+                  : Distribution.constant(
+                      {
+                        state,
+                        executed: false,
+                        success: false,
+                        critical: false,
+                        exactDamage: 0,
+                        appliedConditions: [],
+                      },
+                      transitionKey,
+                    ),
             transitionKey,
           )
           const result = resultFromTransitions(event, transitions, states)
           eventResults[event.id] = result
+          if (event.type === 'conditional')
+            collectConditionalResults(event, states)
           if (
             result.outcome.type === 'expected-damage-against-enemies' ||
             result.outcome.type === 'expected-damage-against-players'
