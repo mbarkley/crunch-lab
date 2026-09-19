@@ -30,6 +30,8 @@ Player and enemy saving throws configure a save DC, save ability, roll mode (inc
 
 Grapple and Shove are save-based player and enemy actions. Their targets use the better of their Strength and Dexterity save modifiers unless a specific ability and modifier are supplied. Failed saves apply Grappled or Prone respectively. Attacks may also include a condition-only follow-up save, which applies its success or failure conditions after a hit.
 
+Grappled escapes use the grappler's DC and the escaping combatant's selected Strength or Dexterity save modifier by default. Either value can be overridden per escape; clearing an override restores inheritance.
+
 The editor and probability model support nested conditional events. Choose **Conditional** from the event picker, select the combatant to inspect, configure ANDed required and absent conditions/effects (including exhaustion, Vex, Sap, and Dodging), then add its ordered child events. The child sequence executes only in matching probability branches.
 
 Attacks can add Vex or Sap to their target on a hit. Saving throws can add either condition to their target on failure, success, or both. Vex grants advantage to the next attack against its target, while Sap gives disadvantage to the next attack made by its target. Applicable conditions are consumed by that attack, and opposing advantage and disadvantage cancel.
@@ -44,7 +46,7 @@ Initial Player State and Enemy State panels expose all persistent conditions, Ve
 
 ## Deferred
 
-Named targets and multiple combatants, import/export, accounts, and a backend remain deferred. Total Cover, spatial targeting, hit points, and shared damage rolls across multiple targets remain outside the current model. Action-resource scheduling remains flexible: events may be placed in either Action or Bonus Action activities without enforcing game-specific action restrictions.
+Named targets and multiple combatants, accounts, and a backend remain deferred. Profiles can be exported as versioned JSON and imported into another browser; importing always creates and loads a new local saved profile. Total Cover, spatial targeting, hit points, and shared damage rolls across multiple targets remain outside the current model. Action-resource scheduling remains flexible: events may be placed in either Action or Bonus Action activities without enforcing game-specific action restrictions.
 
 ## Development
 

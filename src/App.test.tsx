@@ -26,6 +26,16 @@ describe('App', () => {
   it('shows the default player attack and its live outcome', () => {
     render(<App />)
 
+    expect(
+      screen.getByRole('button', { name: 'Export profile' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Import profile' }),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('Import profile file')).toHaveAttribute(
+      'accept',
+      'application/json,.json',
+    )
     const attack = screen.getByRole('article', { name: /player attack/i })
     expect(within(attack).getByLabelText(/target ac/i)).toHaveValue(null)
     expect(within(attack).getByLabelText(/target ac/i)).toHaveAttribute(
@@ -94,6 +104,40 @@ describe('App', () => {
       view.unmount()
     }
   }, 15000)
+
+  it('uses blank inherited values and clear add/remove labels for grappled escapes', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await addEvent(user, 'Grappled Escape')
+    const escape = screen.getByRole('article', { name: 'Grappled Escape' })
+    const dc = within(escape).getByLabelText('DC')
+    const modifier = within(escape).getByLabelText('Modifier')
+
+    expect(dc).toHaveValue(null)
+    expect(dc).toHaveAttribute('placeholder', 'Inherited')
+    expect(modifier).toHaveValue(null)
+    expect(modifier).toHaveAttribute('placeholder', 'Inherited')
+    expect(
+      within(escape).getByLabelText('On Failure: Add Conditions'),
+    ).toBeInTheDocument()
+    expect(
+      within(escape).getByLabelText('On Success: Add Conditions'),
+    ).toBeInTheDocument()
+    expect(
+      within(escape).getByLabelText('On Failure: Remove Conditions'),
+    ).toBeInTheDocument()
+    expect(
+      within(escape).getByLabelText('On Success: Remove Conditions'),
+    ).toBeInTheDocument()
+
+    await user.type(dc, '14')
+    await user.type(modifier, '3')
+    await user.clear(dc)
+    await user.clear(modifier)
+    expect(dc).toHaveValue(null)
+    expect(modifier).toHaveValue(null)
+  })
 
   it('edits extended events and renders execution, initiative, no-damage, and condition results', async () => {
     const user = userEvent.setup()

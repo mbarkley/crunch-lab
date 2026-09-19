@@ -291,9 +291,16 @@ export interface DodgeEventConfig extends BaseEventConfig {
   readonly owner: Combatant
 }
 
-export interface GrappledEscapeConfig extends BaseAbilityCheckConfig {
+export interface GrappledEscapeConfig extends Omit<
+  BaseAbilityCheckConfig,
+  'dc' | 'modifier'
+> {
   readonly type: 'grappled-escape'
   readonly owner: Combatant
+  /** Omit to use the grappler's combatant-state default. */
+  readonly dc?: number
+  /** Omit to use the escaping combatant's selected save modifier. */
+  readonly modifier?: number
   readonly grappledConditionId?: string
 }
 
@@ -2064,8 +2071,6 @@ function abilityCheckTransitions(
   config: AbilityCheckConfig | GrappledEscapeConfig,
   state: SequenceState,
 ): Distribution<EventTransition> {
-  assertInteger(config.dc, 'Ability check DC', 1)
-  assertInteger(config.modifier, 'Ability check modifier')
   if (!ABILITIES.includes(config.ability)) {
     throw new RangeError('Ability check ability is invalid')
   }
@@ -2091,6 +2096,17 @@ function abilityCheckTransitions(
         ? 'player'
         : 'enemy'
   assertCombatant(actor, 'Ability check owner')
+  const grappler: Combatant = actor === 'player' ? 'enemy' : 'player'
+  const dc =
+    config.type === 'grappled-escape'
+      ? (config.dc ?? state[grappler].saveDc ?? 12)
+      : config.dc
+  const modifier =
+    config.type === 'grappled-escape'
+      ? (config.modifier ?? state[actor].saveModifiers?.[config.ability] ?? 0)
+      : config.modifier
+  assertInteger(dc, 'Ability check DC', 1)
+  assertInteger(modifier, 'Ability check modifier')
   const target: Combatant = actor
   if (
     config.type === 'grappled-escape' &&
@@ -2120,8 +2136,7 @@ function abilityCheckTransitions(
     config.sightDependent === true &&
     hasEffectiveCondition(state[actor].conditions, 'blinded')
   const succeeds = (roll: number) =>
-    !sightFailure &&
-    roll + config.modifier - state[actor].exhaustion * 2 >= config.dc
+    !sightFailure && roll + modifier - state[actor].exhaustion * 2 >= dc
   const canRerollD20 =
     state[actor].heroicInspiration &&
     config.heroicInspiration?.type === 'd20-after-failure'
@@ -3142,28 +3157,30 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
         ),
       )
       for (const activity of turn.activities) {
+        let activityBranches = states.map(
+          (state) => ({
+            state,
+            active:
+              activity.conditionGate === undefined ||
+              conditionGateMatches(activity.conditionGate, state),
+          }),
+          (branch) => `${stateKey(branch.state)}:${branch.active}`,
+        )
         for (const event of activity.events) {
-          const transitions = states.flatMap(
-            (state) =>
-              activity.conditionGate !== undefined &&
-              !conditionGateMatches(activity.conditionGate, state)
-                ? Distribution.constant(
-                    {
-                      state,
-                      executed: false,
-                      success: false,
-                      critical: false,
-                      exactDamage: 0,
-                      appliedConditions: [],
-                    },
-                    transitionKey,
-                  )
-                : !eventUsesActivityResource(event) ||
-                    canExecuteActivity(state, activity.owner)
-                  ? eventTransitions(event, state)
+          const before = activityBranches.map(
+            (branch) => branch.state,
+            stateKey,
+          )
+          const branchTransitions = activityBranches.flatMap(
+            (branch) => {
+              const transition =
+                branch.active &&
+                (!eventUsesActivityResource(event) ||
+                  canExecuteActivity(branch.state, activity.owner))
+                  ? eventTransitions(event, branch.state)
                   : Distribution.constant(
                       {
-                        state,
+                        state: branch.state,
                         executed: false,
                         success: false,
                         critical: false,
@@ -3171,13 +3188,28 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
                         appliedConditions: [],
                       },
                       transitionKey,
-                    ),
+                    )
+              return transition.map(
+                (eventTransition) => ({
+                  state: eventTransition.state,
+                  active: branch.active,
+                  eventTransition,
+                }),
+                (next) =>
+                  `${stateKey(next.state)}:${next.active}:${transitionKey(next.eventTransition)}`,
+              )
+            },
+            (next) =>
+              `${stateKey(next.state)}:${next.active}:${transitionKey(next.eventTransition)}`,
+          )
+          const transitions = branchTransitions.map(
+            (branch) => branch.eventTransition,
             transitionKey,
           )
-          const result = resultFromTransitions(event, transitions, states)
+          const result = resultFromTransitions(event, transitions, before)
           eventResults[event.id] = result
           if (event.type === 'conditional')
-            collectConditionalResults(event, states)
+            collectConditionalResults(event, before)
           if (
             result.outcome.type === 'expected-damage-against-enemies' ||
             result.outcome.type === 'expected-damage-against-players'
@@ -3203,8 +3235,12 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
                 (current?.expectedApplications ?? 0) + application.probability,
             })
           }
-          states = transitions.map((transition) => transition.state, stateKey)
+          activityBranches = branchTransitions.map(
+            (branch) => ({ state: branch.state, active: branch.active }),
+            (branch) => `${stateKey(branch.state)}:${branch.active}`,
+          )
         }
+        states = activityBranches.map((branch) => branch.state, stateKey)
       }
       states = collectBoundary(
         states.flatMap(

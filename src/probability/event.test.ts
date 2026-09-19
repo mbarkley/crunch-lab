@@ -12,6 +12,7 @@ import {
 import type {
   AttackConfig,
   EventConfig,
+  GrappledEscapeConfig,
   PlayerAbilityCheckConfig,
   PlayerAttackConfig,
   PlayerSavingThrowConfig,
@@ -723,6 +724,192 @@ describe('event calculations', () => {
       }),
     )
     expect(blinded.eventResults['check-1'].successProbability).toBe(0)
+  })
+
+  it('inherits grappled-escape values from the grappler and escaper', () => {
+    const escape: GrappledEscapeConfig = {
+      id: 'escape-1',
+      type: 'grappled-escape',
+      owner: 'player',
+      ability: 'strength',
+      rollMode: 'normal',
+    }
+    const playerGrappled = {
+      id: 'grapple-player',
+      type: 'grappled' as const,
+      source: 'enemy' as const,
+      recipient: 'player' as const,
+    }
+    const enemyGrappled = {
+      id: 'grapple-enemy',
+      type: 'grappled' as const,
+      source: 'player' as const,
+      recipient: 'enemy' as const,
+    }
+
+    const playerResult = calculateSequence(
+      sequenceConfig([escape], {
+        initialState: {
+          player: {
+            ...INITIAL_SEQUENCE_STATE.player,
+            saveModifiers: {
+              strength: 2,
+              dexterity: 0,
+              constitution: 0,
+              intelligence: 0,
+              wisdom: 0,
+              charisma: 0,
+            },
+            conditions: [playerGrappled],
+          },
+          enemy: {
+            ...INITIAL_SEQUENCE_STATE.enemy,
+            saveDc: 15,
+          },
+        },
+      }),
+    )
+    expect(
+      playerResult.eventResults['escape-1'].successProbability,
+    ).toBeCloseTo(0.4)
+
+    const enemyResult = calculateSequence(
+      sequenceConfig(
+        [{ ...escape, id: 'escape-2', owner: 'enemy', ability: 'dexterity' }],
+        {
+          initialState: {
+            player: {
+              ...INITIAL_SEQUENCE_STATE.player,
+              saveDc: 13,
+            },
+            enemy: {
+              ...INITIAL_SEQUENCE_STATE.enemy,
+              saveModifiers: {
+                strength: 0,
+                dexterity: 1,
+                constitution: 0,
+                intelligence: 0,
+                wisdom: 0,
+                charisma: 0,
+              },
+              conditions: [enemyGrappled],
+            },
+          },
+        },
+      ),
+    )
+    expect(enemyResult.eventResults['escape-2'].successProbability).toBeCloseTo(
+      0.45,
+    )
+  })
+
+  it('uses grappled-escape overrides instead of inherited values', () => {
+    const escape: GrappledEscapeConfig = {
+      id: 'escape-1',
+      type: 'grappled-escape',
+      owner: 'player',
+      ability: 'strength',
+      dc: 14,
+      modifier: 3,
+      rollMode: 'normal',
+    }
+    const result = calculateSequence(
+      sequenceConfig([escape], {
+        initialState: {
+          player: {
+            ...INITIAL_SEQUENCE_STATE.player,
+            saveModifiers: {
+              strength: 0,
+              dexterity: 0,
+              constitution: 0,
+              intelligence: 0,
+              wisdom: 0,
+              charisma: 0,
+            },
+            conditions: [
+              {
+                id: 'grapple-player',
+                type: 'grappled',
+                source: 'enemy',
+                recipient: 'player',
+              },
+            ],
+          },
+          enemy: { ...INITIAL_SEQUENCE_STATE.enemy, saveDc: 20 },
+        },
+      }),
+    )
+
+    expect(result.eventResults['escape-1'].successProbability).toBeCloseTo(0.5)
+  })
+
+  it('evaluates activity condition gates once before its events run', () => {
+    const result = calculateSequence({
+      initialState: {
+        player: { ...INITIAL_SEQUENCE_STATE.player, saveDc: 15 },
+        enemy: {
+          ...INITIAL_SEQUENCE_STATE.enemy,
+          saveModifiers: {
+            strength: 4,
+            dexterity: 0,
+            constitution: 0,
+            intelligence: 0,
+            wisdom: 0,
+            charisma: 0,
+          },
+        },
+      },
+      rounds: [
+        {
+          id: 'round-1',
+          turns: [
+            {
+              id: 'turn-1',
+              owner: 'player',
+              activities: [
+                {
+                  id: 'activity-1',
+                  type: 'action',
+                  owner: 'player',
+                  conditionGate: {
+                    target: 'enemy',
+                    mustHave: [],
+                    mustNotHave: [{ type: 'grappled' }, { type: 'prone' }],
+                  },
+                  events: [
+                    {
+                      id: 'grapple-1',
+                      type: 'player-grapple',
+                      saveDc: 15,
+                      rollMode: 'normal',
+                      cover: 'none',
+                    },
+                    {
+                      id: 'shove-1',
+                      type: 'player-shove',
+                      saveDc: 15,
+                      rollMode: 'normal',
+                      cover: 'none',
+                      conditionGate: {
+                        target: 'enemy',
+                        mustHave: [{ type: 'grappled' }],
+                        mustNotHave: [],
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(result.eventResults['grapple-1'].executionProbability).toBe(1)
+    expect(result.eventResults['shove-1'].executionProbability).toBeCloseTo(0.5)
+    expect(result.eventResults['shove-1'].conditionApplications).toEqual([
+      { condition: 'prone', probability: 0.25 },
+    ])
   })
 
   it('uses Invisible for Initiative Advantage and reports the expected total', () => {

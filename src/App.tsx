@@ -398,6 +398,18 @@ interface SavedProfile {
 }
 
 const PROFILE_STORAGE_KEY = 'crunch-lab.scenario-profiles.v1'
+const PROFILE_EXPORT_FORMAT = 'crunch-lab-profile'
+const PROFILE_EXPORT_VERSION = 1
+
+interface ProfileExport {
+  readonly format: typeof PROFILE_EXPORT_FORMAT
+  readonly version: typeof PROFILE_EXPORT_VERSION
+  readonly exportedAt: string
+  readonly profile: {
+    readonly name: string
+    readonly draft: ScenarioDraft
+  }
+}
 
 interface ActivityPath {
   readonly roundId: string
@@ -750,8 +762,8 @@ function createEvent(type: EventType, id: string): EventDraft {
       type,
       owner: 'player',
       ability: 'strength',
-      dc: '12',
-      modifier: '0',
+      dc: '',
+      modifier: '',
       rollMode: 'normal',
       sightDependent: false,
       grappledConditionId: '',
@@ -1041,17 +1053,18 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
   if (draft.type === 'grappled-escape') {
     const dc = parseInteger(draft.dc)
     const modifier = parseInteger(draft.modifier)
-    if (dc === undefined || dc < 1)
+    if (draft.dc !== '' && (dc === undefined || dc < 1))
       errors.dc = 'Enter a whole number of at least 1.'
-    if (modifier === undefined) errors.modifier = 'Enter a whole number.'
+    if (draft.modifier !== '' && modifier === undefined)
+      errors.modifier = 'Enter a whole number.'
     if (Object.keys(errors).length > 0) return { errors }
     const config: EventConfig = {
       id: draft.id,
       type: draft.type,
       owner: draft.owner,
       ability: draft.ability,
-      dc: dc!,
-      modifier: modifier!,
+      ...(dc === undefined ? {} : { dc }),
+      ...(modifier === undefined ? {} : { modifier }),
       rollMode: draft.rollMode,
       sightDependent: draft.sightDependent,
       grappledConditionId: draft.grappledConditionId || undefined,
@@ -1987,25 +2000,25 @@ function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
   if (isAbilityCheckDraft(event)) {
     return (
       <fieldset className="condition-section">
-        <legend>Conditions and Removals</legend>
+        <legend>Conditions And Removals</legend>
         <div className="condition-groups">
           <ConditionChoices
             id={event.id + '-failure'}
             field="failureConditions"
-            label="On failure"
+            label="On Failure: Add Conditions"
             selected={event.failureConditions}
             update={update}
           />
           <ConditionChoices
             id={event.id + '-success'}
             field="successConditions"
-            label="On success"
+            label="On Success: Add Conditions"
             selected={event.successConditions}
             update={update}
           />
           <ConditionRemovalChoices
             id={event.id + '-failure-removals'}
-            label="On Failure"
+            label="On Failure: Remove Conditions"
             selected={event.failureRemovals}
             onChange={(failureRemovals) =>
               update('failureRemovals', failureRemovals)
@@ -2013,7 +2026,7 @@ function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
           />
           <ConditionRemovalChoices
             id={event.id + '-success-removals'}
-            label="On Success"
+            label="On Success: Remove Conditions"
             selected={event.successRemovals}
             onChange={(successRemovals) =>
               update('successRemovals', successRemovals)
@@ -2243,7 +2256,13 @@ function StateEventFields({ event, update }: Omit<FieldProps, 'errors'>) {
 function AbilityCheckFields({ event, errors, update }: FieldProps) {
   if (!isAbilityCheckDraft(event)) return null
   return (
-    <fieldset className="roll-section">
+    <fieldset
+      className={
+        event.type === 'grappled-escape'
+          ? 'roll-section grappled-escape-roll-section'
+          : 'roll-section'
+      }
+    >
       <legend>
         {event.type === 'grappled-escape'
           ? 'Grappled escape check'
@@ -2271,6 +2290,7 @@ function AbilityCheckFields({ event, errors, update }: FieldProps) {
             min="1"
             step="1"
             value={event.dc}
+            placeholder="Inherited"
             aria-invalid={Boolean(errors.dc)}
             onChange={(change) => update('dc', change.target.value)}
           />
@@ -2282,6 +2302,7 @@ function AbilityCheckFields({ event, errors, update }: FieldProps) {
             type="number"
             step="1"
             value={event.modifier}
+            placeholder="Inherited"
             aria-invalid={Boolean(errors.modifier)}
             onChange={(change) => update('modifier', change.target.value)}
           />
@@ -2593,6 +2614,64 @@ function loadProfiles(): SavedProfile[] {
   } catch {
     return []
   }
+}
+
+function isScenarioDraft(value: unknown): value is ScenarioDraft {
+  if (typeof value !== 'object' || value === null) return false
+  const draft = value as Partial<ScenarioDraft>
+  if (!Array.isArray(draft.rounds)) return false
+  if (typeof draft.stateDrafts !== 'object' || draft.stateDrafts === null) {
+    return false
+  }
+  const states = draft.stateDrafts as Partial<Record<Combatant, unknown>>
+  if (
+    typeof states.player !== 'object' ||
+    states.player === null ||
+    typeof states.enemy !== 'object' ||
+    states.enemy === null
+  ) {
+    return false
+  }
+  return draft.rounds.every(
+    (round) =>
+      typeof round === 'object' &&
+      round !== null &&
+      typeof (round as RoundDraft).id === 'string' &&
+      Array.isArray((round as RoundDraft).turns),
+  )
+}
+
+function importedProfile(
+  value: unknown,
+): Pick<SavedProfile, 'name' | 'draft'> | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const profileExport = value as Partial<ProfileExport>
+  if (
+    profileExport.format !== PROFILE_EXPORT_FORMAT ||
+    profileExport.version !== PROFILE_EXPORT_VERSION ||
+    typeof profileExport.profile !== 'object' ||
+    profileExport.profile === null ||
+    typeof profileExport.profile.name !== 'string' ||
+    !isScenarioDraft(profileExport.profile.draft)
+  ) {
+    return undefined
+  }
+  return {
+    name: profileExport.profile.name.trim() || 'Imported Profile',
+    draft: profileExport.profile.draft,
+  }
+}
+
+function cloneDraft(draft: ScenarioDraft): ScenarioDraft {
+  return JSON.parse(JSON.stringify(draft)) as ScenarioDraft
+}
+
+function profileFileName(name: string) {
+  const base = name
+    .trim()
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-|-$/g, '')
+  return `${base || 'crunch-lab-profile'}.json`
 }
 
 function profileId() {
@@ -3660,6 +3739,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'builder' | 'evaluator'>('builder')
   const [profiles, setProfiles] = useState<SavedProfile[]>(loadProfiles)
   const [loadedProfileId, setLoadedProfileId] = useState<string>()
+  const [profileTransferMessage, setProfileTransferMessage] = useState('')
   const [rounds, setRounds] = useState<RoundDraft[]>([
     {
       id: 'round-1',
@@ -3709,6 +3789,7 @@ function App() {
   const nextActivityId = useRef(2)
   const nextEventId = useRef(2)
   const nextDamagePoolId = useRef(1)
+  const importProfileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     try {
@@ -3816,9 +3897,7 @@ function App() {
       )
     const name = overwrite ? loaded.name : window.prompt('Profile name')?.trim()
     if (!name) return
-    const draft = JSON.parse(
-      JSON.stringify({ rounds, stateDrafts }),
-    ) as ScenarioDraft
+    const draft = cloneDraft({ rounds, stateDrafts })
     if (overwrite) {
       setProfiles((items) =>
         items.map((profile) =>
@@ -3835,11 +3914,62 @@ function App() {
   function loadProfile(id: string) {
     const profile = profiles.find((item) => item.id === id)
     if (!profile) return
-    const draft = JSON.parse(JSON.stringify(profile.draft)) as ScenarioDraft
+    const draft = cloneDraft(profile.draft)
     setRounds(draft.rounds)
     setStateDrafts(draft.stateDrafts)
     resyncIds(draft)
     setLoadedProfileId(profile.id)
+  }
+
+  function exportProfile() {
+    const loaded = profiles.find((profile) => profile.id === loadedProfileId)
+    const name = loaded?.name ?? 'Untitled Scenario'
+    const profileExport: ProfileExport = {
+      format: PROFILE_EXPORT_FORMAT,
+      version: PROFILE_EXPORT_VERSION,
+      exportedAt: new Date().toISOString(),
+      profile: {
+        name,
+        draft: cloneDraft({ rounds, stateDrafts }),
+      },
+    }
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(profileExport, null, 2)], {
+        type: 'application/json',
+      }),
+    )
+    const link = document.createElement('a')
+    link.href = url
+    link.download = profileFileName(name)
+    link.click()
+    URL.revokeObjectURL(url)
+    setProfileTransferMessage(`Exported ${name}.`)
+  }
+
+  async function importProfile(file: File | undefined) {
+    if (!file) return
+    try {
+      const imported = importedProfile(JSON.parse(await file.text()))
+      if (!imported) throw new Error('Invalid profile')
+      const draft = cloneDraft(imported.draft)
+      const profile: SavedProfile = {
+        id: profileId(),
+        name: imported.name,
+        draft,
+      }
+      setProfiles((items) => [...items, profile])
+      setRounds(draft.rounds)
+      setStateDrafts(draft.stateDrafts)
+      resyncIds(draft)
+      setLoadedProfileId(profile.id)
+      setProfileTransferMessage(`Imported and loaded ${profile.name}.`)
+    } catch {
+      setProfileTransferMessage(
+        'Could not import that file. Choose a Crunch Lab profile JSON file.',
+      )
+    } finally {
+      if (importProfileInput.current) importProfileInput.current.value = ''
+    }
   }
 
   function createPoolId() {
@@ -4280,7 +4410,27 @@ function App() {
                 ))}
               </select>
             </label>
+            <button type="button" onClick={exportProfile}>
+              Export profile
+            </button>
+            <button
+              type="button"
+              onClick={() => importProfileInput.current?.click()}
+            >
+              Import profile
+            </button>
+            <input
+              className="visually-hidden"
+              ref={importProfileInput}
+              type="file"
+              accept="application/json,.json"
+              aria-label="Import profile file"
+              onChange={(event) => importProfile(event.target.files?.[0])}
+            />
           </div>
+          <p className="visually-hidden" aria-live="polite">
+            {profileTransferMessage}
+          </p>
 
           <section className="intro" aria-labelledby="page-title">
             <div>
