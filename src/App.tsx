@@ -58,6 +58,7 @@ import {
   calculateEvent,
   calculateSequence,
   INITIAL_SEQUENCE_STATE,
+  MAX_DAMAGE_DICE,
 } from './probability/event'
 import { isPersistentConditionType } from './probability/conditions'
 import type {
@@ -777,8 +778,12 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
     const dieSides = parseInteger(pool.dieSides)
     const modifier = parseInteger(pool.modifier)
     const poolErrors: DamagePoolErrors = {}
-    if (diceCount === undefined || diceCount < 1) {
-      poolErrors.diceCount = 'Enter a whole number of at least 1.'
+    if (
+      diceCount === undefined ||
+      diceCount < 1 ||
+      diceCount > MAX_DAMAGE_DICE
+    ) {
+      poolErrors.diceCount = `Enter a whole number from 1 through ${MAX_DAMAGE_DICE}.`
     }
     if (
       dieSides === undefined ||
@@ -1062,13 +1067,14 @@ function DamageFields({
               <div className="damage-expression">
                 <div className="field">
                   <label htmlFor={prefix + '-' + pool.id + '-dice-count'}>
-                    Dice
+                    Dice (1–{MAX_DAMAGE_DICE})
                   </label>
                   <input
                     id={prefix + '-' + pool.id + '-dice-count'}
                     type="number"
                     inputMode="numeric"
                     min="1"
+                    max={MAX_DAMAGE_DICE}
                     step="1"
                     value={pool.diceCount}
                     aria-invalid={Boolean(poolErrors?.diceCount)}
@@ -2512,27 +2518,32 @@ function CombatantStatePanel({
             onChange={(event) => onChange({ saveDc: event.target.value })}
           />
         </div>
-        {ABILITIES.map((ability) => (
-          <div className="field" key={ability.value}>
-            <label htmlFor={`${stateId}-save-${ability.value}`}>
-              {ability.label} Modifier
-            </label>
-            <input
-              id={`${stateId}-save-${ability.value}`}
-              type="number"
-              step="1"
-              value={state.saveModifiers[ability.value]}
-              onChange={(event) =>
-                onChange({
-                  saveModifiers: {
-                    ...state.saveModifiers,
-                    [ability.value]: event.target.value,
-                  },
-                })
-              }
-            />
+        <fieldset className="state-save-modifiers">
+          <legend>Save Modifiers</legend>
+          <div className="state-save-modifier-grid">
+            {ABILITIES.map((ability) => (
+              <div className="field" key={ability.value}>
+                <label htmlFor={`${stateId}-save-${ability.value}`}>
+                  {ability.label}
+                </label>
+                <input
+                  id={`${stateId}-save-${ability.value}`}
+                  type="number"
+                  step="1"
+                  value={state.saveModifiers[ability.value]}
+                  onChange={(event) =>
+                    onChange({
+                      saveModifiers: {
+                        ...state.saveModifiers,
+                        [ability.value]: event.target.value,
+                      },
+                    })
+                  }
+                />
+              </div>
+            ))}
           </div>
-        ))}
+        </fieldset>
         <label className="checkbox-field">
           <input
             type="checkbox"

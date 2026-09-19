@@ -169,6 +169,43 @@ describe('event calculations', () => {
     expect(result.outcome.expectedDamage).toBeCloseTo(0.8)
   })
 
+  it('calculates a four-die attack without enumerating every critical roll', () => {
+    const result = calculateAttack(
+      playerAttack({
+        armorClass: 100,
+        damagePools: [
+          {
+            id: 'damage-1',
+            diceCount: 4,
+            dieSides: 8,
+            modifier: 0,
+            damageType: 'slashing',
+          },
+        ],
+      }),
+    )
+
+    expect(result.successProbability).toBeCloseTo(0.05)
+    expect(result.outcome.expectedDamage).toBeCloseTo(1.8)
+  })
+
+  it('rejects damage pools that exceed the supported dice limit', () => {
+    expect(() =>
+      calculateAttack({
+        ...playerAttack(),
+        damagePools: [
+          {
+            id: 'damage-1',
+            diceCount: 21,
+            dieSides: 8,
+            modifier: 0,
+            damageType: 'slashing',
+          },
+        ],
+      }),
+    ).toThrow(/damage dice count must not exceed 20/i)
+  })
+
   it('applies natural 1 and natural 20 rules to the selected attack die', () => {
     expect(
       calculateAttack(playerAttack({ armorClass: 1, rollMode: 'advantage' }))
@@ -1049,6 +1086,44 @@ describe('event calculations', () => {
     )
     expect(result.eventResults['attack-2'].outcome.expectedDamage).toBeCloseTo(
       2.25,
+    )
+  })
+
+  it('rerolls the lowest die exactly in a three-die damage pool', () => {
+    const result = calculateSequence(
+      sequenceConfig(
+        [
+          playerAttack({
+            damagePools: [
+              {
+                id: 'damage-1',
+                diceCount: 3,
+                dieSides: 8,
+                modifier: 0,
+                damageType: 'slashing',
+              },
+            ],
+            heroicInspiration: {
+              type: 'damage-pool-threshold',
+              damagePoolId: 'damage-1',
+              threshold: 1,
+            },
+          }),
+        ],
+        {
+          initialState: {
+            player: {
+              ...INITIAL_SEQUENCE_STATE.player,
+              heroicInspiration: true,
+            },
+            enemy: { ...INITIAL_SEQUENCE_STATE.enemy },
+          },
+        },
+      ),
+    )
+
+    expect(result.eventResults['attack-1'].outcome.expectedDamage).toBeCloseTo(
+      7.308570194244,
     )
   })
 

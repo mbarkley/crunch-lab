@@ -30,7 +30,7 @@ describe('App', () => {
     expect(within(attack).getByLabelText(/target ac/i)).toHaveValue(12)
     expect(within(attack).getByLabelText(/^attack modifier$/i)).toHaveValue(0)
     expect(within(attack).getByLabelText(/roll mode/i)).toHaveValue('normal')
-    expect(within(attack).getByLabelText(/^dice$/i)).toHaveValue(1)
+    expect(within(attack).getByLabelText(/^dice \(1–20\)$/i)).toHaveValue(1)
     expect(within(attack).getByLabelText(/die size/i)).toHaveValue('8')
     expect(within(attack).getByLabelText(/^modifier$/i)).toHaveValue(0)
     expect(within(attack).getByText('45%')).toBeInTheDocument()
@@ -132,6 +132,24 @@ describe('App', () => {
 
     expect(within(playerState).getByText('Vex')).toBeInTheDocument()
     expect(within(enemyState).getByText('Sap')).toBeInTheDocument()
+  })
+
+  it('groups initial save modifiers under concise ability labels', () => {
+    render(<App />)
+
+    for (const stateName of ['Player state', 'Enemy state']) {
+      const state = screen.getByRole('region', { name: stateName })
+      const saveModifiers = within(state).getByRole('group', {
+        name: 'Save Modifiers',
+      })
+
+      for (const ability of ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']) {
+        expect(within(saveModifiers).getByLabelText(ability)).toHaveValue(0)
+      }
+      expect(
+        within(saveModifiers).queryByLabelText('STR Modifier'),
+      ).not.toBeInTheDocument()
+    }
   })
 
   it('uses fuzzy condition search for initial state and changes the first result', async () => {

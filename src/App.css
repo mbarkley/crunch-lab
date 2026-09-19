@@ -720,6 +720,27 @@ input[aria-invalid='true'] {
   margin-bottom: 14px;
 }
 
+.state-save-modifiers {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.state-save-modifiers legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: #37424e;
+  font-size: 0.8rem;
+  font-weight: 740;
+}
+
+.state-save-modifier-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .state-field-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: end;
@@ -955,7 +976,8 @@ input[aria-invalid='true'] {
   }
 
   .state-toggle-grid,
-  .state-field-grid {
+  .state-field-grid,
+  .state-save-modifier-grid {
     grid-template-columns: 1fr;
   }
 

@@ -74,6 +74,8 @@ export interface ConditionConfig {
 }
 export type DamageConsequence = 'none' | 'half' | 'full'
 
+export const MAX_DAMAGE_DICE = 20
+
 export interface DamagePoolConfig {
   readonly id: string
   readonly diceCount: number
@@ -746,6 +748,11 @@ function validateDamageRoll(config: DamageRollConfig) {
     }
     ids.add(pool.id)
     assertInteger(pool.diceCount, 'Damage dice count', 1)
+    if (pool.diceCount > MAX_DAMAGE_DICE) {
+      throw new RangeError(
+        `Damage dice count must not exceed ${MAX_DAMAGE_DICE}`,
+      )
+    }
     assertInteger(pool.dieSides, 'Damage die sides', 2)
     assertInteger(pool.modifier, 'Damage modifier')
     if (!DAMAGE_TYPES.includes(pool.damageType)) {
@@ -795,6 +802,32 @@ function rollDice(
   return rolls
 }
 
+interface DiceSummary {
+  readonly total: number
+  readonly lowest: number
+}
+
+function summarizedDice(
+  count: number,
+  sides: number,
+): Distribution<DiceSummary> {
+  let rolls = Distribution.die(sides).map(
+    (value) => ({ total: value, lowest: value }),
+    (summary) => `${summary.total}:${summary.lowest}`,
+  )
+  for (let index = 1; index < count; index += 1) {
+    rolls = rolls.combine(
+      Distribution.die(sides),
+      (summary, value) => ({
+        total: summary.total + value,
+        lowest: Math.min(summary.lowest, value),
+      }),
+      (summary) => `${summary.total}:${summary.lowest}`,
+    )
+  }
+  return rolls
+}
+
 function poolDistribution(
   pool: DamagePoolConfig,
   diceMultiplier: number,
@@ -805,32 +838,25 @@ function poolDistribution(
     inspirationAvailable &&
     policy?.type === 'damage-pool-threshold' &&
     policy.damagePoolId === pool.id
-  return rollDice(pool.diceCount * diceMultiplier, pool.dieSides).flatMap(
-    (values) => {
-      const lowest = Math.min(...values)
-      if (!canReroll || lowest > policy.threshold) {
+  return summarizedDice(pool.diceCount * diceMultiplier, pool.dieSides).flatMap(
+    (summary) => {
+      if (!canReroll || summary.lowest > policy.threshold) {
         return Distribution.constant<DamagePoolOutcome>(
           {
             damageType: pool.damageType,
-            damage: Math.max(
-              0,
-              values.reduce((sum, value) => sum + value, 0) + pool.modifier,
-            ),
+            damage: Math.max(0, summary.total + pool.modifier),
             inspirationSpent: false,
           },
           (outcome) => `${outcome.damageType}:${outcome.damage}:false`,
         )
       }
-      const rerollIndex = values.indexOf(lowest)
       return Distribution.die(pool.dieSides).map<DamagePoolOutcome>(
         (reroll) => {
-          const replaced = [...values]
-          replaced[rerollIndex] = reroll
           return {
             damageType: pool.damageType,
             damage: Math.max(
               0,
-              replaced.reduce((sum, value) => sum + value, 0) + pool.modifier,
+              summary.total - summary.lowest + reroll + pool.modifier,
             ),
             inspirationSpent: true,
           }
