@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
 async function addEvent(
@@ -23,6 +23,94 @@ async function addCondition(
 }
 
 describe('App', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('debounces worker calculations and ignores obsolete worker results', () => {
+    vi.useFakeTimers()
+    class MockWorker {
+      static instances: MockWorker[] = []
+      onmessage: ((event: MessageEvent<unknown>) => void) | null = null
+      onerror: (() => void) | null = null
+      postMessage = vi.fn()
+      terminate = vi.fn()
+
+      constructor() {
+        MockWorker.instances.push(this)
+      }
+    }
+    vi.stubGlobal('Worker', MockWorker)
+
+    render(<App />)
+    const worker = MockWorker.instances[0]
+    expect(worker.postMessage).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(250))
+    expect(worker.postMessage).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      worker.onmessage?.({
+        data: {
+          requestId: 1,
+          sequence: {
+            eventResults: {},
+            outcomes: [
+              {
+                type: 'expected-damage-against-enemies',
+                expectedDamage: 2.25,
+              },
+            ],
+            expectedConditionApplications: [],
+            expectedEnemyDamageByRound: [2.25],
+          },
+        },
+      } as MessageEvent)
+    })
+    expect(screen.getAllByText('2.25')).not.toHaveLength(0)
+
+    fireEvent.change(screen.getByLabelText(/target ac/i), {
+      target: { value: '20' },
+    })
+    expect(screen.getAllByText('Updating…')).not.toHaveLength(0)
+    act(() => vi.advanceTimersByTime(250))
+    expect(worker.postMessage).toHaveBeenCalledTimes(2)
+
+    act(() => {
+      worker.onmessage?.({
+        data: {
+          requestId: 1,
+          sequence: {
+            eventResults: {},
+            outcomes: [
+              { type: 'expected-damage-against-enemies', expectedDamage: 99 },
+            ],
+            expectedConditionApplications: [],
+            expectedEnemyDamageByRound: [99],
+          },
+        },
+      } as MessageEvent)
+    })
+    expect(screen.queryByText('99')).not.toBeInTheDocument()
+
+    act(() => {
+      worker.onmessage?.({
+        data: {
+          requestId: 2,
+          sequence: {
+            eventResults: {},
+            outcomes: [
+              { type: 'expected-damage-against-enemies', expectedDamage: 3 },
+            ],
+            expectedConditionApplications: [],
+            expectedEnemyDamageByRound: [3],
+          },
+        },
+      } as MessageEvent)
+    })
+    expect(screen.getAllByText('3')).not.toHaveLength(0)
+  })
+
   it('shows the default player attack and its live outcome', () => {
     render(<App />)
 

@@ -1364,6 +1364,18 @@ input[aria-invalid='true'] {
   flex: 1;
 }
 
+.calculation-status {
+  align-self: center;
+  color: #786d91;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.is-updating .total-card,
+.workspace.is-updating .attack-step {
+  opacity: 0.72;
+}
+
 .saving-body {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

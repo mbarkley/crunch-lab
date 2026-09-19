@@ -24,7 +24,7 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   ConditionPicker,
   type ConditionPickerOption,
@@ -50,18 +50,23 @@ import type {
   HeroicInspirationPolicy,
   Outcome,
   PersistentConditionType,
+  SequenceConfig,
+  SequenceResult,
   TurnBoundary,
   SavingThrowRollMode,
 } from './probability/event'
 import {
   PERSISTENT_CONDITION_TYPES,
-  calculateEvent,
   calculateSequence,
   INITIAL_SEQUENCE_STATE,
   MAX_DAMAGE_DICE,
 } from './probability/event'
 import { isPersistentConditionType } from './probability/conditions'
 import type { CombatantState, StateProbability } from './probability/event'
+import type {
+  SequenceCalculationRequest,
+  SequenceCalculationResponse,
+} from './sequence-worker'
 import './App.css'
 
 const DAMAGE_DIE_SIDES = [4, 6, 8, 10, 12, 20] as const
@@ -990,7 +995,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       damagePools,
       heroicInspiration,
     }
-    return { errors, config, result: calculateEvent(config) }
+    return { errors, config }
   }
 
   if (
@@ -1021,7 +1026,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       successConditions: draft.successConditions,
       heroicInspiration,
     }
-    return { errors, config, result: calculateEvent(config) }
+    return { errors, config }
   }
 
   if (
@@ -1047,7 +1052,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       successRemovals: draft.successRemovals,
       failureRemovals: draft.failureRemovals,
     }
-    return { errors, config, result: calculateEvent(config) }
+    return { errors, config }
   }
 
   if (draft.type === 'grappled-escape') {
@@ -1073,7 +1078,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       successRemovals: draft.successRemovals,
       failureRemovals: draft.failureRemovals,
     }
-    return { errors, config, result: calculateEvent(config) }
+    return { errors, config }
   }
 
   if (draft.type === 'player-initiative' || draft.type === 'enemy-initiative') {
@@ -1087,7 +1092,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       modifier: modifier!,
       rollMode: draft.rollMode,
     }
-    return { errors, config, result: calculateEvent(config) }
+    return { errors, config }
   }
 
   if (draft.type === 'player-damage' || draft.type === 'enemy-damage') {
@@ -1100,7 +1105,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       damagePools,
       heroicInspiration,
     }
-    return { errors, config, result: calculateEvent(config) }
+    return { errors, config }
   }
 
   if (draft.type === 'conditional') {
@@ -1114,7 +1119,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       mustNotHave: draft.mustNotHave,
       events: children.map((child) => child.config!),
     }
-    return { errors, config, result: calculateEvent(config) }
+    return { errors, config }
   }
 
   if (
@@ -1143,7 +1148,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
       rollMode: draft.rollMode,
       cover: draft.cover,
     }
-    return { errors, config, result: calculateEvent(config) }
+    return { errors, config }
   }
 
   let config: EventConfig
@@ -1203,7 +1208,7 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
   } else {
     return { errors }
   }
-  return { errors, config, result: calculateEvent(config) }
+  return { errors, config }
 }
 
 function outcomeTypeFor(event: EventDraft): OutcomeType {
@@ -2539,7 +2544,7 @@ function stateConfigForDraft(draft: StateDraft): {
   }
 }
 
-function prepareSequence(draft: ScenarioDraft) {
+function prepareSequence(draft: ScenarioDraft, calculate = true) {
   const events = draft.rounds.flatMap((round) =>
     round.turns.flatMap((turn) =>
       turn.activities.flatMap((activity) => activity.events),
@@ -2554,8 +2559,8 @@ function prepareSequence(draft: ScenarioDraft) {
     [...evaluations.values()].every((evaluation) => evaluation.config) &&
     playerStateEvaluation.state &&
     enemyStateEvaluation.state
-  const sequence = valid
-    ? calculateSequence({
+  const config: SequenceConfig | undefined = valid
+    ? {
         initialState: {
           player: playerStateEvaluation.state!,
           enemy: enemyStateEvaluation.state!,
@@ -2581,13 +2586,17 @@ function prepareSequence(draft: ScenarioDraft) {
             })),
           })),
         })),
-      })
+      }
     : undefined
+  // Saved-profile evaluation is deliberately synchronous; the continuously
+  // edited builder below sends this same serializable config to a Worker.
+  const sequence = config && calculate ? calculateSequence(config) : undefined
   return {
     events,
     evaluations,
     playerStateEvaluation,
     enemyStateEvaluation,
+    config,
     sequence,
     valid: Boolean(valid),
   }
@@ -3790,6 +3799,47 @@ function App() {
   const nextEventId = useRef(2)
   const nextDamagePoolId = useRef(1)
   const importProfileInput = useRef<HTMLInputElement>(null)
+  const worker = useRef<Worker | undefined>(undefined)
+  const calculationTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  )
+  const latestCalculationRequest = useRef(0)
+  const [sequence, setSequence] = useState<SequenceResult>()
+  const [calculationStatus, setCalculationStatus] = useState<
+    'idle' | 'updating' | 'invalid' | 'error'
+  >('updating')
+  const workerAvailable = typeof Worker !== 'undefined'
+
+  useEffect(() => {
+    if (!workerAvailable) return
+    const calculationWorker = new Worker(
+      new URL('./sequence-worker.ts', import.meta.url),
+      { type: 'module' },
+    )
+    worker.current = calculationWorker
+    calculationWorker.onmessage = (
+      event: MessageEvent<SequenceCalculationResponse>,
+    ) => {
+      const response = event.data
+      if (response.requestId !== latestCalculationRequest.current) return
+      if ('sequence' in response) {
+        setSequence(response.sequence)
+        setCalculationStatus('idle')
+      } else {
+        setSequence(undefined)
+        setCalculationStatus('error')
+      }
+    }
+    calculationWorker.onerror = () => {
+      setSequence(undefined)
+      setCalculationStatus('error')
+    }
+    return () => {
+      if (calculationTimer.current) clearTimeout(calculationTimer.current)
+      calculationWorker.terminate()
+      worker.current = undefined
+    }
+  }, [workerAvailable])
 
   useEffect(() => {
     try {
@@ -3815,14 +3865,49 @@ function App() {
     }))
   }
 
-  const prepared = prepareSequence({ rounds, stateDrafts })
-  const {
-    events,
-    evaluations,
-    playerStateEvaluation,
-    enemyStateEvaluation,
-    sequence,
-  } = prepared
+  const prepared = useMemo(
+    () => prepareSequence({ rounds, stateDrafts }, false),
+    [rounds, stateDrafts],
+  )
+  const { events, evaluations, playerStateEvaluation, enemyStateEvaluation } =
+    prepared
+
+  // This effect owns the externally calculated result lifecycle. Clearing or
+  // marking a result here prevents an old result from being presented for an
+  // invalid/newer draft before a worker response can arrive.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (calculationTimer.current) clearTimeout(calculationTimer.current)
+    const config = prepared.config
+    if (!config) {
+      latestCalculationRequest.current += 1
+      setSequence(undefined)
+      setCalculationStatus('invalid')
+      return
+    }
+
+    if (!workerAvailable) {
+      // Vitest and non-browser renderers have no Worker implementation. This
+      // preserves their deterministic rendering while browsers always use it.
+      try {
+        setSequence(calculateSequence(config))
+        setCalculationStatus('idle')
+      } catch {
+        setSequence(undefined)
+        setCalculationStatus('error')
+      }
+      return
+    }
+
+    const requestId = latestCalculationRequest.current + 1
+    latestCalculationRequest.current = requestId
+    setCalculationStatus('updating')
+    calculationTimer.current = setTimeout(() => {
+      const request: SequenceCalculationRequest = { requestId, config }
+      worker.current?.postMessage(request)
+    }, 250)
+  }, [prepared.config, workerAvailable])
+  /* eslint-enable react-hooks/set-state-in-effect */
   const shownOutcomeTypes = [
     ...new Set(
       events
@@ -4441,7 +4526,14 @@ function App() {
                 update as you work.
               </p>
             </div>
-            <div className="totals" aria-live="polite">
+            <div
+              className={`totals${calculationStatus === 'updating' ? ' is-updating' : ''}`}
+              aria-live="polite"
+              aria-busy={calculationStatus === 'updating'}
+            >
+              {calculationStatus === 'updating' && (
+                <span className="calculation-status">Updating…</span>
+              )}
               {shownOutcomeTypes.map((type) => {
                 const outcome = sequence?.outcomes.find(
                   (item) => item.type === type,
@@ -4489,6 +4581,15 @@ function App() {
                 )
               })}
             </div>
+            <p className="visually-hidden" aria-live="polite">
+              {calculationStatus === 'updating'
+                ? 'Updating calculations.'
+                : calculationStatus === 'invalid'
+                  ? 'Calculations unavailable until the draft is valid.'
+                  : calculationStatus === 'error'
+                    ? 'Calculation error. Edit the draft and try again.'
+                    : 'Calculations updated.'}
+            </p>
           </section>
 
           <section
@@ -4509,14 +4610,20 @@ function App() {
             />
           </section>
 
-          <section className="workspace" aria-labelledby="sequence-title">
+          <section
+            className={`workspace${calculationStatus === 'updating' ? ' is-updating' : ''}`}
+            aria-labelledby="sequence-title"
+            aria-busy={calculationStatus === 'updating'}
+          >
             <div className="workspace-heading">
               <div>
                 <p className="eyebrow">Sequence</p>
                 <h2 id="sequence-title">Combat timeline</h2>
               </div>
               <span className="workspace-note">
-                Rounds resolve from top to bottom
+                {calculationStatus === 'updating'
+                  ? 'Updating…'
+                  : 'Rounds resolve from top to bottom'}
               </span>
             </div>
             <p className="visually-hidden" aria-live="polite">
@@ -4812,8 +4919,7 @@ function App() {
                                       event.id,
                                     )!
                                     const result =
-                                      sequence?.eventResults[event.id] ??
-                                      evaluation.result
+                                      sequence?.eventResults[event.id]
                                     const renderableResult = result as
                                       RenderableEventResult | undefined
                                     const isAttack =

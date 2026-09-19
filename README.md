@@ -38,6 +38,8 @@ Attacks can add Vex or Sap to their target on a hit. Saving throws can add eithe
 
 Every event produces a typed outcome. The summary groups expected damage against enemies separately from expected damage against players, reports each event's condition application chance, and shows the expected number of times each configured condition is applied to players and enemies across the sequence.
 
+Builder calculations run in a background worker after a 250 ms pause in editing. Valid edits retain the last completed results while they are marked as updating; invalid drafts show unavailable results until their field-level validation errors are corrected.
+
 Named scenario profiles save the complete editable draft locally in the browser. Profiles may be incomplete; they remain available to edit but are marked unavailable in the Sequence Evaluator until valid. The evaluator compares any number of saved profiles by their expected damage to enemies in each round, with both a responsive visual chart and an accessible data table. Profiles and their selections are local to the device; profile selections are temporary.
 
 Event result metrics use distinct colour and Lucide icon treatments so execution, success, critical, damage, initiative, and condition outcomes can be scanned quickly. State snapshots use compact condition/effect icons with accessible names and hover labels; condition pickers and editable chips retain their full text labels.
