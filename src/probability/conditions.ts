@@ -17,7 +17,7 @@ export const PERSISTENT_CONDITION_TYPES = [
 
 export type PersistentConditionType =
   (typeof PERSISTENT_CONDITION_TYPES)[number]
-export const TRANSIENT_EFFECT_TYPES = ['vex', 'sap'] as const
+export const TRANSIENT_EFFECT_TYPES = ['vex', 'sap', 'dodging'] as const
 export type TransientEffectType = (typeof TRANSIENT_EFFECT_TYPES)[number]
 export type ConditionCatalogType = PersistentConditionType | 'exhaustion'
 export const CONDITION_CATALOG_TYPES: readonly ConditionCatalogType[] = [

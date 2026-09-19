@@ -102,8 +102,9 @@ interface BaseEventConfig {
 interface DamageEventConfig extends BaseEventConfig, DamageRollConfig {}
 
 interface BaseAttackConfig extends DamageEventConfig {
-  readonly armorClass: number
-  readonly attackModifier: number
+  /** Omit to use the target's / attacker's combatant-state default. */
+  readonly armorClass?: number
+  readonly attackModifier?: number
   readonly rollMode: AttackRollMode
   readonly cover: Cover
   readonly hitConditions: readonly ConditionConfig[]
@@ -120,8 +121,9 @@ export interface EnemyAttackConfig extends BaseAttackConfig {
 export type AttackConfig = PlayerAttackConfig | EnemyAttackConfig
 
 interface BaseSavingThrowConfig extends DamageEventConfig {
-  readonly saveDc: number
-  readonly saveModifier: number
+  /** Omit to use the source's / target's combatant-state default. */
+  readonly saveDc?: number
+  readonly saveModifier?: number
   readonly saveAbility: Ability
   readonly rollMode: SavingThrowRollMode
   readonly cover: Cover
@@ -263,13 +265,19 @@ export type EventConfig =
   | StartConcentrationConfig
   | StopConcentrationConfig
 
-export type ActivityType = 'action' | 'bonus-action'
+/** A generic turn timeline entry does not consume an action resource. */
+export type ActivityType = 'action' | 'bonus-action' | 'generic'
 
 export interface ConcentrationState {
   readonly constitutionModifier: number
 }
 
 export interface CombatantState {
+  /** Baseline d20 traits, used when an event does not set an override. */
+  readonly armorClass?: number
+  readonly attackModifier?: number
+  readonly saveDc?: number
+  readonly saveModifiers?: Readonly<Record<Ability, number>>
   readonly vex: boolean
   readonly sap: boolean
   readonly heroicInspiration: boolean
@@ -451,6 +459,17 @@ const DAMAGE_CONSEQUENCES: readonly DamageConsequence[] = [
 ]
 export const INITIAL_SEQUENCE_STATE: SequenceState = {
   player: {
+    armorClass: 12,
+    attackModifier: 0,
+    saveDc: 12,
+    saveModifiers: {
+      strength: 0,
+      dexterity: 0,
+      constitution: 0,
+      intelligence: 0,
+      wisdom: 0,
+      charisma: 0,
+    },
     vex: false,
     sap: false,
     heroicInspiration: false,
@@ -466,6 +485,17 @@ export const INITIAL_SEQUENCE_STATE: SequenceState = {
     dodging: false,
   },
   enemy: {
+    armorClass: 12,
+    attackModifier: 0,
+    saveDc: 12,
+    saveModifiers: {
+      strength: 0,
+      dexterity: 0,
+      constitution: 0,
+      intelligence: 0,
+      wisdom: 0,
+      charisma: 0,
+    },
     vex: false,
     sap: false,
     heroicInspiration: false,
@@ -1107,9 +1137,14 @@ export function applyConditionConfigs(
   const appliedConditions = new Set<ConditionType>()
 
   conditions.forEach((condition, index) => {
-    if (condition.type === 'vex' || condition.type === 'sap') {
+    if (
+      condition.type === 'vex' ||
+      condition.type === 'sap' ||
+      condition.type === 'dodging'
+    ) {
       if (condition.type === 'vex') vex = true
-      else sap = true
+      else if (condition.type === 'sap') sap = true
+      else state = { ...state, [target]: { ...state[target], dodging: true } }
       appliedConditions.add(condition.type)
       return
     }
@@ -1203,7 +1238,11 @@ export function removeConditionConfigs(
   const removed = new Set<ConditionType>()
   for (const removal of removals) {
     const targetState = next[target]
-    if (removal.type === 'vex' || removal.type === 'sap') {
+    if (
+      removal.type === 'vex' ||
+      removal.type === 'sap' ||
+      removal.type === 'dodging'
+    ) {
       if (targetState[removal.type]) removed.add(removal.type)
       next = {
         ...next,
@@ -1363,13 +1402,15 @@ function transitionKey(transition: EventTransition) {
 function attackSuccess(
   roll: number,
   config: AttackConfig,
+  armorClass: number,
+  attackModifier: number,
   exhaustionPenalty = 0,
 ) {
   return (
     roll === 20 ||
     (roll !== 1 &&
-      roll + config.attackModifier - exhaustionPenalty >=
-        config.armorClass + coverBonus(config.cover))
+      roll + attackModifier - exhaustionPenalty >=
+        armorClass + coverBonus(config.cover))
   )
 }
 
@@ -1377,8 +1418,6 @@ function attackTransitions(
   config: AttackConfig,
   state: SequenceState,
 ): Distribution<EventTransition> {
-  assertInteger(config.armorClass, 'Armor class', 1)
-  assertInteger(config.attackModifier, 'Attack modifier')
   if (!ATTACK_ROLL_MODES.includes(config.rollMode)) {
     throw new RangeError('Attack roll mode is invalid')
   }
@@ -1390,6 +1429,11 @@ function attackTransitions(
   const attacker: Combatant =
     config.type === 'player-attack' ? 'player' : 'enemy'
   const target: Combatant = attacker === 'player' ? 'enemy' : 'player'
+  const armorClass = config.armorClass ?? state[target].armorClass ?? 12
+  const attackModifier =
+    config.attackModifier ?? state[attacker].attackModifier ?? 0
+  assertInteger(armorClass, 'Armor class', 1)
+  assertInteger(attackModifier, 'Attack modifier')
   const attackerEffects = conditionRollEffects(
     state[attacker].conditions,
     'outgoing-attack',
@@ -1430,13 +1474,25 @@ function attackTransitions(
   return d20Rolls(mode).flatMap((values) => {
     const original = selectedD20(values, mode)
     const exhaustionPenalty = state[attacker].exhaustion * 2
-    const initialSuccess = attackSuccess(original, config, exhaustionPenalty)
+    const initialSuccess = attackSuccess(
+      original,
+      config,
+      armorClass,
+      attackModifier,
+      exhaustionPenalty,
+    )
     const resolvedRolls =
       !initialSuccess && canRerollD20
         ? rerolledD20(values, mode)
         : Distribution.constant(original, (roll) => roll)
     return resolvedRolls.flatMap((roll) => {
-      const success = attackSuccess(roll, config, exhaustionPenalty)
+      const success = attackSuccess(
+        roll,
+        config,
+        armorClass,
+        attackModifier,
+        exhaustionPenalty,
+      )
       const critical =
         success &&
         (roll === 20 ||
@@ -1501,8 +1557,16 @@ function savingThrowTransitions(
   config: SavingThrowConfig,
   state: SequenceState,
 ): Distribution<EventTransition> {
-  assertInteger(config.saveDc, 'Save DC', 1)
-  assertInteger(config.saveModifier, 'Save modifier')
+  const target: Combatant =
+    config.type === 'player-saving-throw' ? 'player' : 'enemy'
+  const source: Combatant = target === 'player' ? 'enemy' : 'player'
+  const saveDc = config.saveDc ?? state[source].saveDc ?? 12
+  const saveModifier =
+    config.saveModifier ??
+    state[target].saveModifiers?.[config.saveAbility] ??
+    0
+  assertInteger(saveDc, 'Save DC', 1)
+  assertInteger(saveModifier, 'Save modifier')
   if (!ABILITIES.includes(config.saveAbility)) {
     throw new RangeError('Saving throw ability is invalid')
   }
@@ -1521,9 +1585,6 @@ function savingThrowTransitions(
   validateConditions(config.failureConditions)
   validateConditions(config.successConditions)
   validateInspirationPolicy(config)
-  const target: Combatant =
-    config.type === 'player-saving-throw' ? 'player' : 'enemy'
-  const source: Combatant = target === 'player' ? 'enemy' : 'player'
   const automaticFailure = config.rollMode === 'automatic-failure'
   const saveEffects = conditionRollEffects(
     state[target].conditions,
@@ -1552,7 +1613,7 @@ function savingThrowTransitions(
     [],
   )
   const succeeds = (roll: number) =>
-    roll + config.saveModifier + bonus - exhaustionPenalty >= config.saveDc
+    roll + saveModifier + bonus - exhaustionPenalty >= saveDc
   const rolls = automaticFailure
     ? Distribution.constant<readonly number[]>([0], (values) =>
         values.join(','),
@@ -2466,8 +2527,14 @@ function validateSequence(config: SequenceConfig) {
       }
       for (const activity of turn.activities) {
         assertUniqueId(activity.id, 'Activity', ids)
-        if (activity.type !== 'action' && activity.type !== 'bonus-action') {
-          throw new RangeError('Activity type must be action or bonus-action')
+        if (
+          activity.type !== 'action' &&
+          activity.type !== 'bonus-action' &&
+          activity.type !== 'generic'
+        ) {
+          throw new RangeError(
+            'Activity type must be action, bonus-action, or generic',
+          )
         }
         if (activity.owner !== turn.owner) {
           throw new RangeError(

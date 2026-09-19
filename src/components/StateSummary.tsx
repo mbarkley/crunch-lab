@@ -3,6 +3,8 @@ import type {
   SequenceState,
   StateProbability,
 } from '../probability/event'
+import type { ConditionType } from '../probability/conditions'
+import { CONDITION_ICONS, ConditionIcon } from './ConditionIcon'
 
 export interface StateSummaryProps {
   readonly label: string
@@ -44,7 +46,36 @@ function stateLabels(state: CombatantState) {
 
 function combatantSummary(label: string, state: SequenceState['player']) {
   const labels = stateLabels(state)
-  return `${label}: ${labels.length > 0 ? labels.join(', ') : 'No active conditions'}`
+  return (
+    <span className="state-summary-combatant">
+      <span className="visually-hidden">
+        {label}:{' '}
+        {labels.length > 0 ? labels.join(', ') : 'No active conditions'}
+      </span>
+      <span
+        className="state-condition-icons"
+        aria-label={`${label} active state`}
+      >
+        {labels.length > 0 ? (
+          labels.map((text) => {
+            const condition = text.toLowerCase().split(' ')[0] as ConditionType
+            const isCondition = condition in CONDITION_ICONS
+            return (
+              <span className="state-condition-icon" key={text} title={text}>
+                {isCondition ? (
+                  <ConditionIcon condition={condition} label={text} size={15} />
+                ) : (
+                  <Sparkles aria-label={text} role="img" size={15} />
+                )}
+              </span>
+            )
+          })
+        ) : (
+          <span className="state-no-conditions">None</span>
+        )}
+      </span>
+    </span>
+  )
 }
 
 function percentage(probability: number) {
@@ -126,3 +157,4 @@ export function StateTransition({ before, after }: StateTransitionProps) {
     </section>
   )
 }
+import { Sparkles } from 'lucide-react'

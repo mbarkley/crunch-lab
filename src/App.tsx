@@ -4,17 +4,22 @@ import {
   ChevronUp,
   Copy,
   GripVertical,
+  HeartPulse,
   Plus,
   Shield,
+  ShieldOff,
   Swords,
+  Sparkles,
   Trash2,
   X,
+  Zap,
 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import {
   ConditionPicker,
   type ConditionPickerOption,
 } from './components/ConditionPicker'
+import { ConditionIcon } from './components/ConditionIcon'
 import { StateSummary, StateTransition } from './components/StateSummary'
 import type {
   Ability,
@@ -44,6 +49,7 @@ import {
   calculateSequence,
   INITIAL_SEQUENCE_STATE,
 } from './probability/event'
+import { isPersistentConditionType } from './probability/conditions'
 import type {
   CombatantState,
   SequenceState,
@@ -119,18 +125,33 @@ const CONDITION_LABELS: Record<ConditionType, string> = {
   exhaustion: 'Exhaustion',
   vex: 'Vex',
   sap: 'Sap',
+  dodging: 'Dodging',
 }
+const STATE_CONDITION_OPTIONS: readonly ConditionPickerOption<ConditionType>[] =
+  ([...PERSISTENT_CONDITION_TYPES, 'vex', 'sap', 'dodging'] as const).map(
+    (type) => ({
+      value: type,
+      label: CONDITION_LABELS[type],
+    }),
+  )
 const CONDITION_OPTIONS: readonly ConditionPickerOption<PersistentConditionType>[] =
   PERSISTENT_CONDITION_TYPES.map((type) => ({
     value: type,
     label: CONDITION_LABELS[type],
   }))
 const CONDITION_IMMUNITY_OPTIONS: readonly ConditionPickerOption<PersistentConditionType>[] =
-  CONDITION_OPTIONS
+  PERSISTENT_CONDITION_TYPES.map((type) => ({
+    value: type,
+    label: CONDITION_LABELS[type],
+  }))
 const DAMAGE_TYPE_OPTIONS: readonly ConditionPickerOption<DamageType>[] =
   DAMAGE_TYPES
 
 interface StateDraft {
+  readonly armorClass: string
+  readonly attackModifier: string
+  readonly saveDc: string
+  readonly saveModifiers: Record<Ability, string>
   readonly vex: boolean
   readonly sap: boolean
   readonly helped: boolean
@@ -177,6 +198,8 @@ interface BaseEventDraft extends DamageDraft, InspirationDraft {
 
 interface AttackDraft extends BaseEventDraft {
   readonly type: 'player-attack' | 'enemy-attack'
+  readonly overrideArmorClass: boolean
+  readonly overrideAttackModifier: boolean
   readonly armorClass: string
   readonly attackModifier: string
   readonly rollMode: AttackRollMode
@@ -187,6 +210,8 @@ interface AttackDraft extends BaseEventDraft {
 interface SavingThrowDraft extends BaseEventDraft {
   readonly id: string
   readonly type: 'player-saving-throw' | 'enemy-saving-throw'
+  readonly overrideSaveDc: boolean
+  readonly overrideSaveModifier: boolean
   readonly saveDc: string
   readonly saveModifier: string
   readonly saveAbility: Ability
@@ -327,8 +352,12 @@ interface ActivityPath {
 }
 type EventField =
   | 'armorClass'
+  | 'overrideArmorClass'
+  | 'overrideAttackModifier'
   | 'attackModifier'
   | 'saveDc'
+  | 'overrideSaveDc'
+  | 'overrideSaveModifier'
   | 'saveModifier'
   | 'failureDamage'
   | 'successDamage'
@@ -449,6 +478,8 @@ function createEvent(type: EventType, id: string): EventDraft {
     return {
       id,
       type,
+      overrideArmorClass: false,
+      overrideAttackModifier: false,
       armorClass: '12',
       attackModifier: '0',
       rollMode: 'normal',
@@ -462,6 +493,8 @@ function createEvent(type: EventType, id: string): EventDraft {
     return {
       id,
       type,
+      overrideSaveDc: false,
+      overrideSaveModifier: false,
       saveDc: '12',
       saveModifier: '0',
       saveAbility: 'dexterity',
@@ -743,10 +776,13 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
   if (isAttackDraft(draft)) {
     const armorClass = parseInteger(draft.armorClass)
     const attackModifier = parseInteger(draft.attackModifier)
-    if (armorClass === undefined || armorClass < 1) {
+    if (
+      draft.overrideArmorClass &&
+      (armorClass === undefined || armorClass < 1)
+    ) {
       errors.armorClass = 'Enter a whole number of at least 1.'
     }
-    if (attackModifier === undefined) {
+    if (draft.overrideAttackModifier && attackModifier === undefined) {
       errors.attackModifier = 'Enter a whole number.'
     }
     const heroicInspiration = inspirationPolicyFor(draft, errors)
@@ -755,8 +791,10 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
     const config: EventConfig = {
       id: draft.id,
       type: draft.type,
-      armorClass: armorClass!,
-      attackModifier: attackModifier!,
+      ...(draft.overrideArmorClass ? { armorClass: armorClass! } : {}),
+      ...(draft.overrideAttackModifier
+        ? { attackModifier: attackModifier! }
+        : {}),
       rollMode: draft.rollMode,
       cover: draft.cover,
       hitConditions: draft.hitConditions,
@@ -772,18 +810,18 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
   ) {
     const saveDc = parseInteger(draft.saveDc)
     const saveModifier = parseInteger(draft.saveModifier)
-    if (saveDc === undefined || saveDc < 1) {
+    if (draft.overrideSaveDc && (saveDc === undefined || saveDc < 1)) {
       errors.saveDc = 'Enter a whole number of at least 1.'
     }
-    if (saveModifier === undefined)
+    if (draft.overrideSaveModifier && saveModifier === undefined)
       errors.saveModifier = 'Enter a whole number.'
     const heroicInspiration = inspirationPolicyFor(draft, errors)
     if (Object.keys(errors).length > 0) return { errors }
     const config: EventConfig = {
       id: draft.id,
       type: draft.type,
-      saveDc: saveDc!,
-      saveModifier: saveModifier!,
+      ...(draft.overrideSaveDc ? { saveDc: saveDc! } : {}),
+      ...(draft.overrideSaveModifier ? { saveModifier: saveModifier! } : {}),
       saveAbility: draft.saveAbility,
       rollMode: draft.rollMode,
       cover: draft.cover,
@@ -1181,6 +1219,17 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
       <Swords aria-hidden="true" size={20} />
       <div className="roll-fields">
         <div className="field">
+          <label className="checkbox-field">
+            <input
+              id={`${event.id}-override-armor-class`}
+              type="checkbox"
+              checked={event.overrideArmorClass}
+              onChange={(change) =>
+                update('overrideArmorClass', change.target.checked)
+              }
+            />
+            Use custom AC
+          </label>
           <label htmlFor={`${event.id}-armor-class`}>Target AC</label>
           <input
             id={`${event.id}-armor-class`}
@@ -1193,7 +1242,10 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
             aria-describedby={
               errors.armorClass ? `${event.id}-armor-class-error` : undefined
             }
-            onChange={(change) => update('armorClass', change.target.value)}
+            onChange={(change) => {
+              update('overrideArmorClass', true)
+              update('armorClass', change.target.value)
+            }}
           />
           {errors.armorClass && (
             <span className="field-error" id={`${event.id}-armor-class-error`}>
@@ -1202,6 +1254,17 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
           )}
         </div>
         <div className="field">
+          <label className="checkbox-field">
+            <input
+              id={`${event.id}-override-attack-modifier`}
+              type="checkbox"
+              checked={event.overrideAttackModifier}
+              onChange={(change) =>
+                update('overrideAttackModifier', change.target.checked)
+              }
+            />
+            Use custom modifier
+          </label>
           <label htmlFor={`${event.id}-attack-modifier`}>Attack modifier</label>
           <input
             id={`${event.id}-attack-modifier`}
@@ -1215,7 +1278,10 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
                 ? `${event.id}-attack-modifier-error`
                 : undefined
             }
-            onChange={(change) => update('attackModifier', change.target.value)}
+            onChange={(change) => {
+              update('overrideAttackModifier', true)
+              update('attackModifier', change.target.value)
+            }}
           />
           {errors.attackModifier && (
             <span
@@ -1273,6 +1339,17 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
         <Shield aria-hidden="true" size={20} />
         <div className="roll-fields">
           <div className="field">
+            <label className="checkbox-field">
+              <input
+                id={`${event.id}-override-save-dc`}
+                type="checkbox"
+                checked={event.overrideSaveDc}
+                onChange={(change) =>
+                  update('overrideSaveDc', change.target.checked)
+                }
+              />
+              Use custom DC
+            </label>
             <label htmlFor={`${event.id}-save-dc`}>Save DC</label>
             <input
               id={`${event.id}-save-dc`}
@@ -1285,7 +1362,10 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
               aria-describedby={
                 errors.saveDc ? `${event.id}-save-dc-error` : undefined
               }
-              onChange={(change) => update('saveDc', change.target.value)}
+              onChange={(change) => {
+                update('overrideSaveDc', true)
+                update('saveDc', change.target.value)
+              }}
             />
             {errors.saveDc && (
               <span className="field-error" id={`${event.id}-save-dc-error`}>
@@ -1294,6 +1374,17 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
             )}
           </div>
           <div className="field">
+            <label className="checkbox-field">
+              <input
+                id={`${event.id}-override-save-modifier`}
+                type="checkbox"
+                checked={event.overrideSaveModifier}
+                onChange={(change) =>
+                  update('overrideSaveModifier', change.target.checked)
+                }
+              />
+              Use custom modifier
+            </label>
             <label htmlFor={`${event.id}-save-modifier`}>Save modifier</label>
             <input
               id={`${event.id}-save-modifier`}
@@ -1307,7 +1398,10 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
                   ? `${event.id}-save-modifier-error`
                   : undefined
               }
-              onChange={(change) => update('saveModifier', change.target.value)}
+              onChange={(change) => {
+                update('overrideSaveModifier', true)
+                update('saveModifier', change.target.value)
+              }}
             />
             {errors.saveModifier && (
               <span
@@ -1880,6 +1974,9 @@ function eventConditionConfigs(event: EventDraft): readonly ConditionConfig[] {
 }
 
 interface StateErrors {
+  armorClass?: string
+  attackModifier?: string
+  saveDc?: string
   exhaustion?: string
   concentrationModifier?: string
 }
@@ -1887,6 +1984,15 @@ interface StateErrors {
 function createStateDraft(combatant: Combatant): StateDraft {
   const state = INITIAL_SEQUENCE_STATE[combatant]
   return {
+    armorClass: String(state.armorClass ?? 12),
+    attackModifier: String(state.attackModifier ?? 0),
+    saveDc: String(state.saveDc ?? 12),
+    saveModifiers: Object.fromEntries(
+      ABILITIES.map((ability) => [
+        ability.value,
+        String(state.saveModifiers?.[ability.value] ?? 0),
+      ]),
+    ) as Record<Ability, string>,
     vex: state.vex,
     sap: state.sap,
     helped: state.helped,
@@ -1912,6 +2018,23 @@ function stateConfigForDraft(draft: StateDraft): {
   readonly errors: StateErrors
 } {
   const errors: StateErrors = {}
+  const armorClass = parseInteger(draft.armorClass)
+  const attackModifier = parseInteger(draft.attackModifier)
+  const saveDc = parseInteger(draft.saveDc)
+  const saveModifiers = Object.fromEntries(
+    ABILITIES.map((ability) => [
+      ability.value,
+      parseInteger(draft.saveModifiers[ability.value]),
+    ]),
+  ) as Record<Ability, number | undefined>
+  if (armorClass === undefined || armorClass < 1)
+    errors.armorClass = 'Enter a whole number of at least 1.'
+  if (attackModifier === undefined)
+    errors.attackModifier = 'Enter a whole number.'
+  if (saveDc === undefined || saveDc < 1)
+    errors.saveDc = 'Enter a whole number of at least 1.'
+  if (Object.values(saveModifiers).some((modifier) => modifier === undefined))
+    errors.saveDc = 'Enter whole-number save modifiers.'
   const exhaustion = parseInteger(draft.exhaustion)
   if (exhaustion === undefined || exhaustion < 0 || exhaustion > 6) {
     errors.exhaustion = 'Choose an exhaustion level from 0 through 6.'
@@ -1924,6 +2047,10 @@ function stateConfigForDraft(draft: StateDraft): {
   return {
     errors,
     state: {
+      armorClass: armorClass!,
+      attackModifier: attackModifier!,
+      saveDc: saveDc!,
+      saveModifiers: saveModifiers as Record<Ability, number>,
       vex: draft.vex,
       sap: draft.sap,
       helped: draft.helped,
@@ -2267,14 +2394,22 @@ function CombatantStatePanel({
 }) {
   const label = combatant === 'player' ? 'Player' : 'Enemy'
   const stateId = `${combatant}-state`
-  const selectedConditions = state.conditions.map((condition) => condition.type)
+  const selectedConditions: readonly ConditionType[] = [
+    ...state.conditions.map((condition) => condition.type),
+    ...(state.vex ? (['vex'] as const) : []),
+    ...(state.sap ? (['sap'] as const) : []),
+    ...(state.dodging ? (['dodging'] as const) : []),
+  ]
 
-  function updateConditions(values: readonly PersistentConditionType[]) {
+  function updateConditions(values: readonly ConditionType[]) {
     const existing = new Map(
       state.conditions.map((condition) => [condition.type, condition]),
     )
     onChange({
-      conditions: values.map(
+      vex: values.includes('vex'),
+      sap: values.includes('sap'),
+      dodging: values.includes('dodging'),
+      conditions: values.filter(isPersistentConditionType).map(
         (type) =>
           existing.get(type) ?? {
             id: `${combatant}-initial-${type}`,
@@ -2307,24 +2442,61 @@ function CombatantStatePanel({
         <span className="state-panel-note">Used before Round 1</span>
       </div>
       <div className="state-toggle-grid">
-        <label className="checkbox-field">
+        <div className="field">
+          <label htmlFor={`${stateId}-armor-class`}>Armor class</label>
           <input
-            type="checkbox"
-            aria-label={`${label} has Vex`}
-            checked={state.vex}
-            onChange={(event) => onChange({ vex: event.target.checked })}
+            id={`${stateId}-armor-class`}
+            type="number"
+            min="1"
+            step="1"
+            value={state.armorClass}
+            onChange={(event) => onChange({ armorClass: event.target.value })}
           />
-          Vex
-        </label>
-        <label className="checkbox-field">
+        </div>
+        <div className="field">
+          <label htmlFor={`${stateId}-attack-modifier`}>Attack modifier</label>
           <input
-            type="checkbox"
-            aria-label={`${label} has Sap`}
-            checked={state.sap}
-            onChange={(event) => onChange({ sap: event.target.checked })}
+            id={`${stateId}-attack-modifier`}
+            type="number"
+            step="1"
+            value={state.attackModifier}
+            onChange={(event) =>
+              onChange({ attackModifier: event.target.value })
+            }
           />
-          Sap
-        </label>
+        </div>
+        <div className="field">
+          <label htmlFor={`${stateId}-save-dc`}>Save DC</label>
+          <input
+            id={`${stateId}-save-dc`}
+            type="number"
+            min="1"
+            step="1"
+            value={state.saveDc}
+            onChange={(event) => onChange({ saveDc: event.target.value })}
+          />
+        </div>
+        {ABILITIES.map((ability) => (
+          <div className="field" key={ability.value}>
+            <label htmlFor={`${stateId}-save-${ability.value}`}>
+              {ability.label} save modifier
+            </label>
+            <input
+              id={`${stateId}-save-${ability.value}`}
+              type="number"
+              step="1"
+              value={state.saveModifiers[ability.value]}
+              onChange={(event) =>
+                onChange({
+                  saveModifiers: {
+                    ...state.saveModifiers,
+                    [ability.value]: event.target.value,
+                  },
+                })
+              }
+            />
+          </div>
+        ))}
         <label className="checkbox-field">
           <input
             type="checkbox"
@@ -2352,15 +2524,6 @@ function CombatantStatePanel({
             </select>
           </div>
         )}
-        <label className="checkbox-field">
-          <input
-            type="checkbox"
-            aria-label={`${label} is Dodging`}
-            checked={state.dodging}
-            onChange={(event) => onChange({ dodging: event.target.checked })}
-          />
-          Dodging
-        </label>
         <label className="checkbox-field">
           <input
             type="checkbox"
@@ -2430,7 +2593,7 @@ function CombatantStatePanel({
         <ConditionPicker
           id={`${stateId}-conditions`}
           label="Conditions"
-          options={CONDITION_OPTIONS}
+          options={STATE_CONDITION_OPTIONS}
           selected={selectedConditions}
           onChange={updateConditions}
         />
@@ -3016,8 +3179,14 @@ function App() {
                 const activities = [...turn.activities]
                 const [moved] = activities.splice(index, 1)
                 activities.splice(target, 0, moved)
+                const label =
+                  moved.type === 'action'
+                    ? 'Action'
+                    : moved.type === 'bonus-action'
+                      ? 'Bonus action'
+                      : 'Generic timeline'
                 setReorderAnnouncement(
-                  `${moved.type === 'action' ? 'Action' : 'Bonus action'} moved to position ${target + 1} in its turn.`,
+                  `${label} moved to position ${target + 1} in its turn.`,
                 )
                 return { ...turn, activities }
               }),
@@ -3091,8 +3260,8 @@ function App() {
           <p className="eyebrow">Dice probability workbench</p>
           <h1 id="page-title">Build your combat timeline.</h1>
           <p className="intro-copy">
-            Arrange rounds, turns, actions, and events. Outcomes update as you
-            work.
+            Arrange rounds, turns, timeline entries, and events. Outcomes update
+            as you work.
           </p>
         </div>
         <div className="totals" aria-live="polite">
@@ -3314,7 +3483,9 @@ function App() {
                                 <h5 id={`${activity.id}-title`}>
                                   {activity.type === 'action'
                                     ? 'Action'
-                                    : 'Bonus action'}
+                                    : activity.type === 'bonus-action'
+                                      ? 'Bonus action'
+                                      : 'Turn timeline'}
                                 </h5>
                               </div>
                               <div className="event-actions">
@@ -3689,7 +3860,11 @@ function App() {
                                         aria-live="polite"
                                       >
                                         <div className="event-result-metrics">
-                                          <span>
+                                          <span className="metric-execution">
+                                            <Calculator
+                                              aria-hidden="true"
+                                              size={15}
+                                            />
                                             Execution chance
                                             <strong>
                                               {result
@@ -3701,7 +3876,11 @@ function App() {
                                           </span>
                                           {event.type === 'player-initiative' ||
                                           event.type === 'enemy-initiative' ? (
-                                            <span>
+                                            <span className="metric-initiative">
+                                              <Sparkles
+                                                aria-hidden="true"
+                                                size={15}
+                                              />
                                               Expected initiative
                                               <strong>
                                                 {result?.outcome.type ===
@@ -3714,7 +3893,18 @@ function App() {
                                               </strong>
                                             </span>
                                           ) : null}
-                                          <span>
+                                          <span className="metric-success">
+                                            {isAttack ? (
+                                              <Swords
+                                                aria-hidden="true"
+                                                size={15}
+                                              />
+                                            ) : (
+                                              <Shield
+                                                aria-hidden="true"
+                                                size={15}
+                                              />
+                                            )}
                                             {isAttack
                                               ? 'Hit chance'
                                               : event.type ===
@@ -3739,7 +3929,11 @@ function App() {
                                             </strong>
                                           </span>
                                           {isAttack ? (
-                                            <span>
+                                            <span className="metric-critical">
+                                              <Zap
+                                                aria-hidden="true"
+                                                size={15}
+                                              />
                                               Critical chance
                                               <strong>
                                                 {result
@@ -3755,7 +3949,11 @@ function App() {
                                             'expected-damage-against-enemies' ||
                                           result?.outcome.type ===
                                             'expected-damage-against-players' ? (
-                                            <span>
+                                            <span className="metric-damage">
+                                              <HeartPulse
+                                                aria-hidden="true"
+                                                size={15}
+                                              />
                                               Expected damage against {target}
                                               <strong>
                                                 {numberFormatter.format(
@@ -3765,14 +3963,27 @@ function App() {
                                             </span>
                                           ) : result?.outcome.type ===
                                             'no-damage' ? (
-                                            <span>
+                                            <span className="metric-damage">
+                                              <ShieldOff
+                                                aria-hidden="true"
+                                                size={15}
+                                              />
                                               Damage outcome
                                               <strong>No damage</strong>
                                             </span>
                                           ) : null}
                                           {result?.conditionApplications.map(
                                             (application) => (
-                                              <span key={application.condition}>
+                                              <span
+                                                className="metric-condition"
+                                                key={application.condition}
+                                              >
+                                                <ConditionIcon
+                                                  condition={
+                                                    application.condition
+                                                  }
+                                                  size={15}
+                                                />
                                                 {
                                                   CONDITION_LABELS[
                                                     application.condition
@@ -3884,6 +4095,15 @@ function App() {
                       >
                         <Plus aria-hidden="true" size={16} />
                         Add bonus action
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          addActivity(round.id, turn.id, turn.owner, 'generic')
+                        }
+                      >
+                        <Plus aria-hidden="true" size={16} />
+                        Add turn event timeline
                       </button>
                     </div>
                   </section>

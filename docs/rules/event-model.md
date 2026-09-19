@@ -28,7 +28,10 @@ The eventual event model needs these concepts:
 
 The editor may continue to present a guided sequence. These concepts do not
 require a free-form graph; rounds can contain ordered turn sections, and turns
-can contain ordered events.
+can contain ordered events. The current editor represents a turn's timeline as
+an ordered `generic` activity alongside `action` and `bonus-action` activities.
+Generic activities are resource-neutral, so events such as removing an effect
+can be sequenced in a turn without being attached to an Action or Bonus Action.
 
 ## Timing vocabulary
 

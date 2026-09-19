@@ -127,25 +127,11 @@ describe('App', () => {
 
     const playerState = screen.getByRole('region', { name: 'Player state' })
     const enemyState = screen.getByRole('region', { name: 'Enemy state' })
-    await user.click(
-      within(playerState).getByRole('checkbox', { name: 'Player has Vex' }),
-    )
-    await user.click(
-      within(enemyState).getByRole('checkbox', { name: 'Enemy has Sap' }),
-    )
+    await addCondition(user, playerState, 'Vex')
+    await addCondition(user, enemyState, 'Sap')
 
-    expect(
-      within(playerState).getByRole('checkbox', { name: 'Player has Vex' }),
-    ).toBeChecked()
-    expect(
-      within(enemyState).getByRole('checkbox', { name: 'Enemy has Sap' }),
-    ).toBeChecked()
-    expect(
-      within(playerState).getByRole('checkbox', { name: 'Player has Sap' }),
-    ).not.toBeChecked()
-    expect(
-      within(enemyState).getByRole('checkbox', { name: 'Enemy has Vex' }),
-    ).not.toBeChecked()
+    expect(within(playerState).getByText('Vex')).toBeInTheDocument()
+    expect(within(enemyState).getByText('Sap')).toBeInTheDocument()
   })
 
   it('uses fuzzy condition search for initial state and changes the first result', async () => {
@@ -168,9 +154,7 @@ describe('App', () => {
     )
     expect(within(enemyState).getByText('Paralyzed')).toBeInTheDocument()
 
-    await user.click(
-      within(enemyState).getByRole('checkbox', { name: 'Enemy has Vex' }),
-    )
+    await user.click(within(enemyState).getByRole('button', { name: 'Vex' }))
     const attack = screen.getByRole('article', { name: /player attack/i })
     const hitChance = within(attack).getByText('Hit chance').closest('span')!
     expect(within(hitChance).getByText('69.75%')).toBeInTheDocument()
@@ -630,6 +614,24 @@ describe('App', () => {
       within(bonusAction).getByRole('article', {
         name: /enemy saving throw/i,
       }),
+    ).toBeInTheDocument()
+
+    await user.click(
+      within(playerTurn).getByRole('button', {
+        name: /add turn event timeline/i,
+      }),
+    )
+    const genericTimeline = within(playerTurn).getByRole('region', {
+      name: 'Turn timeline',
+    })
+    await user.click(
+      within(genericTimeline).getByRole('button', { name: /^add event$/i }),
+    )
+    await user.click(
+      within(genericTimeline).getByRole('button', { name: 'Remove effect' }),
+    )
+    expect(
+      within(genericTimeline).getByRole('article', { name: /remove effect/i }),
     ).toBeInTheDocument()
   })
 
