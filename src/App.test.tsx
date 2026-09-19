@@ -111,6 +111,59 @@ describe('App', () => {
     expect(screen.getAllByText('3')).not.toHaveLength(0)
   })
 
+  it('calculates added evaluator profiles in a worker', () => {
+    class MockWorker {
+      static instances: MockWorker[] = []
+      onmessage: ((event: MessageEvent<unknown>) => void) | null = null
+      onerror: (() => void) | null = null
+      postMessage = vi.fn()
+      terminate = vi.fn()
+
+      constructor() {
+        MockWorker.instances.push(this)
+      }
+    }
+    vi.stubGlobal('Worker', MockWorker)
+    vi.spyOn(window, 'prompt').mockReturnValue('Alpha')
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Sequence Evaluator' }))
+    // Select values are generated profile IDs, so use the rendered option.
+    const profileId = (
+      screen.getByRole('option', { name: 'Alpha' }) as HTMLOptionElement
+    ).value
+    fireEvent.change(screen.getByLabelText('Saved profile'), {
+      target: { value: profileId },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add profile' }))
+
+    const evaluatorWorker = MockWorker.instances[1]
+    expect(evaluatorWorker.postMessage).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Calculating…')).toBeInTheDocument()
+
+    act(() => {
+      evaluatorWorker.onmessage?.({
+        data: {
+          requestId: 1,
+          sequence: {
+            eventResults: {},
+            outcomes: [
+              { type: 'expected-damage-against-enemies', expectedDamage: 2.25 },
+            ],
+            expectedConditionApplications: [],
+            expectedEnemyDamageByRound: [2.25],
+          },
+        },
+      } as MessageEvent)
+    })
+    expect(
+      screen.getByRole('table', {
+        name: 'Expected damage to enemies by round',
+      }),
+    ).toBeInTheDocument()
+  })
+
   it('shows the default player attack and its live outcome', () => {
     render(<App />)
 

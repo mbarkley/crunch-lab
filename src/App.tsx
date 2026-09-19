@@ -67,6 +67,7 @@ import type {
   SequenceCalculationRequest,
   SequenceCalculationResponse,
 } from './sequence-worker'
+import { calculateSequenceRequest } from './sequence-worker'
 import './App.css'
 
 const DAMAGE_DIE_SIDES = [4, 6, 8, 10, 12, 20] as const
@@ -400,6 +401,13 @@ interface SavedProfile {
   readonly id: string
   readonly name: string
   readonly draft: ScenarioDraft
+}
+
+interface EvaluatorCalculationState {
+  readonly signature: string
+  readonly status: 'pending' | 'ready' | 'error'
+  readonly sequence?: SequenceResult
+  readonly error?: string
 }
 
 const PROFILE_STORAGE_KEY = 'crunch-lab.scenario-profiles.v1'
@@ -3436,6 +3444,156 @@ function GeneratedBoundaryResults({
   )
 }
 
+function useEvaluatorCalculations(
+  profiles: readonly SavedProfile[],
+  selectedIds: readonly string[],
+) {
+  const calculations = useMemo(
+    () =>
+      profiles
+        .filter((profile) => selectedIds.includes(profile.id))
+        .map((profile) => ({
+          profile,
+          signature: JSON.stringify(profile.draft),
+          prepared: prepareSequence(profile.draft, false),
+        })),
+    [profiles, selectedIds],
+  )
+  const worker = useRef<Worker | undefined>(undefined)
+  const requestId = useRef(0)
+  const requests = useRef(new Map<number, { id: string; signature: string }>())
+  const latest = useRef(calculations)
+  const [states, setStates] = useState<
+    Readonly<Record<string, EvaluatorCalculationState>>
+  >({})
+  const workerAvailable = typeof Worker !== 'undefined'
+
+  useEffect(() => {
+    latest.current = calculations
+  }, [calculations])
+
+  useEffect(() => {
+    if (!workerAvailable) return
+    const requestMap = requests.current
+    const calculationWorker = new Worker(
+      new URL('./sequence-worker.ts', import.meta.url),
+      { type: 'module' },
+    )
+    worker.current = calculationWorker
+    calculationWorker.onmessage = (
+      event: MessageEvent<SequenceCalculationResponse>,
+    ) => {
+      const response = event.data
+      const request = requestMap.get(response.requestId)
+      if (!request) return
+      requestMap.delete(response.requestId)
+      const current = latest.current.find(
+        (item) =>
+          item.profile.id === request.id &&
+          item.signature === request.signature &&
+          item.prepared.config,
+      )
+      if (!current) return
+      setStates((existing) => ({
+        ...existing,
+        [request.id]:
+          'sequence' in response
+            ? {
+                signature: request.signature,
+                status: 'ready',
+                sequence: response.sequence,
+              }
+            : {
+                signature: request.signature,
+                status: 'error',
+                error: response.error,
+              },
+      }))
+    }
+    calculationWorker.onerror = () => {
+      const pending = new Set(
+        latest.current
+          .filter((item) => item.prepared.config)
+          .map((item) => item.profile.id),
+      )
+      requestMap.clear()
+      setStates((existing) =>
+        Object.fromEntries(
+          Object.entries(existing).map(([id, state]) => [
+            id,
+            pending.has(id) && state.status === 'pending'
+              ? { ...state, status: 'error', error: 'Calculation failed.' }
+              : state,
+          ]),
+        ),
+      )
+    }
+    return () => {
+      calculationWorker.terminate()
+      worker.current = undefined
+      requestMap.clear()
+    }
+  }, [workerAvailable])
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    for (const item of calculations) {
+      if (!item.prepared.config) continue
+      const current = states[item.profile.id]
+      if (current?.signature === item.signature) continue
+      const id = requestId.current + 1
+      requestId.current = id
+      const request: SequenceCalculationRequest = {
+        requestId: id,
+        config: item.prepared.config,
+      }
+      requests.current.set(id, {
+        id: item.profile.id,
+        signature: item.signature,
+      })
+      setStates((existing) => ({
+        ...existing,
+        [item.profile.id]: { signature: item.signature, status: 'pending' },
+      }))
+      if (workerAvailable) {
+        worker.current?.postMessage(request)
+      } else {
+        const response = calculateSequenceRequest(request)
+        if ('sequence' in response) {
+          setStates((existing) => ({
+            ...existing,
+            [item.profile.id]: {
+              signature: item.signature,
+              status: 'ready',
+              sequence: response.sequence,
+            },
+          }))
+        } else {
+          setStates((existing) => ({
+            ...existing,
+            [item.profile.id]: {
+              signature: item.signature,
+              status: 'error',
+              error: response.error,
+            },
+          }))
+        }
+      }
+    }
+  }, [calculations, states, workerAvailable])
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const evaluable = calculations.flatMap((item) => {
+    const state = states[item.profile.id]
+    return state?.signature === item.signature &&
+      state.status === 'ready' &&
+      state.sequence
+      ? [{ ...item, prepared: { ...item.prepared, sequence: state.sequence } }]
+      : []
+  })
+  return { calculations, states, evaluable }
+}
+
 function SequenceEvaluator({
   profiles,
 }: {
@@ -3446,11 +3604,16 @@ function SequenceEvaluator({
   const selected = profiles.filter((profile) =>
     selectedIds.includes(profile.id),
   )
-  const valid = selected.map((profile) => ({
-    profile,
-    prepared: prepareSequence(profile.draft),
-  }))
-  const evaluable = valid.filter((item) => item.prepared.valid)
+  const { calculations, states, evaluable } = useEvaluatorCalculations(
+    profiles,
+    selectedIds,
+  )
+  const pending = calculations.filter(
+    (item) =>
+      item.prepared.valid &&
+      states[item.profile.id]?.signature === item.signature &&
+      states[item.profile.id]?.status === 'pending',
+  )
   const roundCount = Math.max(
     0,
     ...evaluable.map(
@@ -3498,7 +3661,11 @@ function SequenceEvaluator({
   )
   const colors = ['#7156cc', '#16806c', '#d66b35', '#3971c1', '#a33c77']
   return (
-    <section className="evaluator" aria-labelledby="evaluator-title">
+    <section
+      className="evaluator"
+      aria-labelledby="evaluator-title"
+      aria-busy={pending.length > 0}
+    >
       <p className="eyebrow">Saved scenarios</p>
       <h1 id="evaluator-title">Sequence evaluator</h1>
       <p className="intro-copy">Compare expected damage to enemies by round.</p>
@@ -3537,6 +3704,17 @@ function SequenceEvaluator({
           {selected.map((profile) => (
             <span className="profile-chip" key={profile.id}>
               {profile.name}
+              {(() => {
+                const item = calculations.find(
+                  (calculation) => calculation.profile.id === profile.id,
+                )
+                const state = states[profile.id]
+                return item &&
+                  state?.signature === item.signature &&
+                  state.status === 'pending' ? (
+                  <small>Calculating…</small>
+                ) : null
+              })()}
               <button
                 type="button"
                 aria-label={`Remove ${profile.name}`}
@@ -3556,13 +3734,31 @@ function SequenceEvaluator({
         </p>
       ) : (
         <>
-          {valid
+          {calculations
             .filter((item) => !item.prepared.valid)
             .map(({ profile }) => (
               <p className="profile-warning" key={profile.id}>
                 {profile.name} is incomplete or invalid and cannot be evaluated.
               </p>
             ))}
+          {calculations
+            .filter((item) => {
+              const state = states[item.profile.id]
+              return (
+                state?.signature === item.signature && state.status === 'error'
+              )
+            })
+            .map(({ profile }) => (
+              <p className="profile-warning" key={`${profile.id}-error`}>
+                {profile.name} could not be calculated. Edit and save the
+                profile, then add it again.
+              </p>
+            ))}
+          <p className="visually-hidden" aria-live="polite">
+            {pending.length > 0
+              ? `Calculating ${pending.length} selected ${pending.length === 1 ? 'profile' : 'profiles'}.`
+              : 'Selected profile calculations are up to date.'}
+          </p>
           {evaluable.length > 0 && !hasDamage && (
             <p className="empty-state">
               The selected valid profiles do not deal damage to enemies.

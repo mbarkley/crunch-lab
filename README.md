@@ -40,7 +40,7 @@ Every event produces a typed outcome. The summary groups expected damage against
 
 Builder calculations run in a background worker after a 250 ms pause in editing. Valid edits retain the last completed results while they are marked as updating; invalid drafts show unavailable results until their field-level validation errors are corrected.
 
-Named scenario profiles save the complete editable draft locally in the browser. Profiles may be incomplete; they remain available to edit but are marked unavailable in the Sequence Evaluator until valid. The evaluator compares any number of saved profiles by their expected damage to enemies in each round, with both a responsive visual chart and an accessible data table. Profiles and their selections are local to the device; profile selections are temporary.
+Named scenario profiles save the complete editable draft locally in the browser. Profiles may be incomplete; they remain available to edit but are marked unavailable in the Sequence Evaluator until valid. The evaluator calculates selected profiles in a background worker, keeping completed comparisons visible while newly added profiles are marked as calculating. It compares ready profiles by expected damage to enemies in each round, with both a responsive visual chart and an accessible data table. Profiles and their selections are local to the device; profile selections are temporary.
 
 Event result metrics use distinct colour and Lucide icon treatments so execution, success, critical, damage, initiative, and condition outcomes can be scanned quickly. State snapshots use compact condition/effect icons with accessible names and hover labels; condition pickers and editable chips retain their full text labels.
 
