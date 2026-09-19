@@ -101,6 +101,38 @@ const calculateEventSequence = (events: readonly EventConfig[]) =>
   calculateSequence(sequenceConfig(events))
 
 describe('event calculations', () => {
+  it('groups expected enemy damage by round', () => {
+    const first = playerAttack()
+    const second = playerAttack({
+      id: 'attack-2',
+      damagePools: [{ ...first.damagePools[0], id: 'damage-2' }],
+    })
+    const result = calculateSequence({
+      ...sequenceConfig([first]),
+      rounds: [
+        sequenceConfig([first]).rounds[0],
+        {
+          id: 'round-2',
+          turns: [
+            {
+              id: 'turn-2',
+              owner: 'player',
+              activities: [
+                {
+                  id: 'activity-2',
+                  type: 'action',
+                  owner: 'player',
+                  events: [second],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    expect(result.expectedEnemyDamageByRound).toEqual([2.25, 2.25])
+  })
+
   it('calculates an AC-based player attack against enemies', () => {
     const result = calculateAttack(playerAttack())
 
@@ -1015,6 +1047,7 @@ describe('event calculations', () => {
         },
       ],
       expectedConditionApplications: [],
+      expectedEnemyDamageByRound: [2.25],
     })
   })
 

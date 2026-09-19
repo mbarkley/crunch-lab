@@ -392,6 +392,8 @@ export interface SequenceResult {
   readonly outcomes: readonly Outcome[]
   readonly expectedConditionApplications: readonly ExpectedConditionApplications[]
   readonly generatedResults?: readonly GeneratedBoundaryResult[]
+  /** Expected enemy damage, grouped by sequence round (including turn boundaries). */
+  readonly expectedEnemyDamageByRound: readonly number[]
 }
 
 interface EventTransition {
@@ -1202,6 +1204,13 @@ export function applyConditionConfigs(
       return
     }
 
+    // Persistent conditions are state, not stacks. Reapplying a condition
+    // that is already present leaves its original duration and stable ID in
+    // place, so probability branches with double/triple applications merge.
+    if (instances.some((instance) => instance.type === condition.type)) {
+      return
+    }
+
     instances.push({
       id: condition.id ?? `${applicationId}:${index}`,
       type: condition.type,
@@ -1380,6 +1389,30 @@ export function eventUsesActivityResource(config: EventConfig): boolean {
   }
 }
 
+function normalizePersistentConditions(
+  conditions: readonly ConditionInstance[],
+): readonly ConditionInstance[] {
+  const seen = new Set<PersistentConditionType>()
+  return conditions.filter((condition) => {
+    if (seen.has(condition.type)) return false
+    seen.add(condition.type)
+    return true
+  })
+}
+
+function normalizeSequenceState(state: SequenceState): SequenceState {
+  return {
+    player: {
+      ...state.player,
+      conditions: normalizePersistentConditions(state.player.conditions),
+    },
+    enemy: {
+      ...state.enemy,
+      conditions: normalizePersistentConditions(state.enemy.conditions),
+    },
+  }
+}
+
 function stateKey(state: SequenceState) {
   return (['player', 'enemy'] as const)
     .map((combatant) => {
@@ -1397,10 +1430,10 @@ function stateKey(state: SequenceState) {
         value.helped,
         value.helpSource ?? '',
         value.dodging,
-        value.conditions
+        normalizePersistentConditions(value.conditions)
           .map(
             (condition) =>
-              `${condition.id},${condition.type},${condition.source},${condition.recipient},${condition.duration?.remainingTurns ?? ''},${condition.duration?.boundary ?? ''},${condition.duration?.turnOwner ?? ''},${JSON.stringify(condition.duration?.repeatedSave ?? '')},${JSON.stringify(condition.duration?.ongoingDamage ?? '')}`,
+              `${condition.type},${condition.duration?.remainingTurns ?? ''},${condition.duration?.boundary ?? ''},${condition.duration?.turnOwner ?? ''},${JSON.stringify(condition.duration?.repeatedSave ?? '')},${JSON.stringify(condition.duration?.ongoingDamage ?? '')}`,
           )
           .sort()
           .join(';'),
@@ -2613,11 +2646,16 @@ function validateSequence(config: SequenceConfig) {
 
 export function calculateSequence(config: SequenceConfig): SequenceResult {
   validateSequence(config)
-  let states = Distribution.constant(config.initialState, stateKey)
+  let states = Distribution.constant(
+    normalizeSequenceState(config.initialState),
+    stateKey,
+  )
   const eventResults: Record<string, EventResult> = {}
   const totals = new Map<Outcome['type'], number>()
   const conditionTotals = new Map<string, ExpectedConditionApplications>()
   const weightedGeneratedResults: WeightedGeneratedResult[] = []
+  const enemyDamageByRound: number[] = []
+  let currentRoundEnemyDamage = 0
 
   const collectBoundary = (
     boundaryDistribution: Distribution<BoundaryTransition>,
@@ -2638,6 +2676,10 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
             (totals.get(generatedOutcome.type) ?? 0) +
               outcome.probability * generatedOutcome.expectedDamage,
           )
+          if (generatedOutcome.type === 'expected-damage-against-enemies') {
+            currentRoundEnemyDamage +=
+              outcome.probability * generatedOutcome.expectedDamage
+          }
         }
       }
     }
@@ -2645,6 +2687,7 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
   }
 
   for (const round of config.rounds) {
+    currentRoundEnemyDamage = 0
     for (const turn of round.turns) {
       states = collectBoundary(
         states.flatMap(
@@ -2684,6 +2727,9 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
               (totals.get(result.outcome.type) ?? 0) +
                 result.outcome.expectedDamage,
             )
+            if (result.outcome.type === 'expected-damage-against-enemies') {
+              currentRoundEnemyDamage += result.outcome.expectedDamage
+            }
           }
           const target = eventTarget(event)
           for (const application of result.conditionApplications) {
@@ -2708,6 +2754,7 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
         ),
       )
     }
+    enemyDamageByRound.push(normalizeCalculation(currentRoundEnemyDamage))
   }
 
   const outcomes: Outcome[] = []
@@ -2729,6 +2776,7 @@ export function calculateSequence(config: SequenceConfig): SequenceResult {
         expectedApplications: normalizeCalculation(total.expectedApplications),
       }),
     ),
+    expectedEnemyDamageByRound: enemyDamageByRound,
     ...(weightedGeneratedResults.length > 0
       ? {
           generatedResults: aggregateGeneratedResults(weightedGeneratedResults),

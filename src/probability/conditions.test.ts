@@ -9,6 +9,7 @@ import {
   applyConditionConfigs,
   INITIAL_SEQUENCE_STATE,
   calculateSequence,
+  sequenceStateKey,
 } from './event'
 import type { SequenceConfig } from './event'
 
@@ -112,6 +113,52 @@ describe('condition state model', () => {
     ])
   })
 
+  it('does not stack repeated persistent conditions', () => {
+    const once = applyConditionConfigs(
+      INITIAL_SEQUENCE_STATE,
+      'enemy',
+      'player',
+      'first',
+      [
+        {
+          type: 'prone',
+          duration: { remainingTurns: 2, boundary: 'end', turnOwner: 'enemy' },
+        },
+      ],
+    )
+    const twice = applyConditionConfigs(
+      once.state,
+      'enemy',
+      'player',
+      'second',
+      [{ type: 'prone' }],
+    )
+
+    expect(twice.state.enemy.conditions).toEqual(once.state.enemy.conditions)
+    expect(twice.appliedConditions).toEqual([])
+  })
+
+  it('merges equivalent conditions created by different events', () => {
+    const withFirstProne = applyConditionConfigs(
+      INITIAL_SEQUENCE_STATE,
+      'enemy',
+      'player',
+      'first-event',
+      [{ type: 'prone' }],
+    ).state
+    const withSecondProne = applyConditionConfigs(
+      INITIAL_SEQUENCE_STATE,
+      'enemy',
+      'player',
+      'second-event',
+      [{ type: 'prone' }],
+    ).state
+
+    expect(sequenceStateKey(withFirstProne)).toBe(
+      sequenceStateKey(withSecondProne),
+    )
+  })
+
   it('skips immune applications while preserving other applications', () => {
     const state = {
       ...INITIAL_SEQUENCE_STATE,
@@ -146,6 +193,7 @@ describe('condition state model', () => {
       eventResults: {},
       outcomes: [],
       expectedConditionApplications: [],
+      expectedEnemyDamageByRound: [],
     })
   })
 

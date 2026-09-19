@@ -24,7 +24,7 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
   ConditionPicker,
   type ConditionPickerOption,
@@ -61,11 +61,7 @@ import {
   MAX_DAMAGE_DICE,
 } from './probability/event'
 import { isPersistentConditionType } from './probability/conditions'
-import type {
-  CombatantState,
-  SequenceState,
-  StateProbability,
-} from './probability/event'
+import type { CombatantState, StateProbability } from './probability/event'
 import './App.css'
 
 const DAMAGE_DIE_SIDES = [4, 6, 8, 10, 12, 20] as const
@@ -352,6 +348,19 @@ interface RoundDraft {
   readonly id: string
   readonly turns: readonly TurnDraft[]
 }
+
+interface ScenarioDraft {
+  readonly rounds: RoundDraft[]
+  readonly stateDrafts: Record<Combatant, StateDraft>
+}
+
+interface SavedProfile {
+  readonly id: string
+  readonly name: string
+  readonly draft: ScenarioDraft
+}
+
+const PROFILE_STORAGE_KEY = 'crunch-lab.scenario-profiles.v1'
 
 interface ActivityPath {
   readonly roundId: string
@@ -2068,6 +2077,81 @@ function stateConfigForDraft(draft: StateDraft): {
   }
 }
 
+function prepareSequence(draft: ScenarioDraft) {
+  const events = draft.rounds.flatMap((round) =>
+    round.turns.flatMap((turn) =>
+      turn.activities.flatMap((activity) => activity.events),
+    ),
+  )
+  const evaluations = new Map(
+    events.map((event) => [event.id, evaluateEvent(event)] as const),
+  )
+  const playerStateEvaluation = stateConfigForDraft(draft.stateDrafts.player)
+  const enemyStateEvaluation = stateConfigForDraft(draft.stateDrafts.enemy)
+  const valid =
+    [...evaluations.values()].every((evaluation) => evaluation.config) &&
+    playerStateEvaluation.state &&
+    enemyStateEvaluation.state
+  const sequence = valid
+    ? calculateSequence({
+        initialState: {
+          player: playerStateEvaluation.state!,
+          enemy: enemyStateEvaluation.state!,
+        },
+        rounds: draft.rounds.map((round) => ({
+          id: round.id,
+          turns: round.turns.map((turn) => ({
+            id: turn.id,
+            owner: turn.owner,
+            activities: turn.activities.map((activity) => ({
+              id: activity.id,
+              type: activity.type,
+              owner: activity.owner,
+              events: activity.events.map(
+                (event) => evaluations.get(event.id)!.config!,
+              ),
+            })),
+          })),
+        })),
+      })
+    : undefined
+  return {
+    events,
+    evaluations,
+    playerStateEvaluation,
+    enemyStateEvaluation,
+    sequence,
+    valid: Boolean(valid),
+  }
+}
+
+function loadProfiles(): SavedProfile[] {
+  try {
+    const raw = window.localStorage.getItem(PROFILE_STORAGE_KEY)
+    if (!raw) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (item): item is SavedProfile =>
+        typeof item === 'object' &&
+        item !== null &&
+        typeof (item as SavedProfile).id === 'string' &&
+        typeof (item as SavedProfile).name === 'string' &&
+        typeof (item as SavedProfile).draft === 'object' &&
+        (item as SavedProfile).draft !== null &&
+        Array.isArray((item as SavedProfile).draft.rounds) &&
+        typeof (item as SavedProfile).draft.stateDrafts === 'object' &&
+        (item as SavedProfile).draft.stateDrafts !== null,
+    )
+  } catch {
+    return []
+  }
+}
+
+function profileId() {
+  return `profile-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
 function ConditionInstanceEditor({
   condition,
   onChange,
@@ -2741,7 +2825,318 @@ function GeneratedBoundaryResults({
   )
 }
 
+function SequenceEvaluator({
+  profiles,
+}: {
+  readonly profiles: SavedProfile[]
+}) {
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [pickerId, setPickerId] = useState('')
+  const selected = profiles.filter((profile) =>
+    selectedIds.includes(profile.id),
+  )
+  const valid = selected.map((profile) => ({
+    profile,
+    prepared: prepareSequence(profile.draft),
+  }))
+  const evaluable = valid.filter((item) => item.prepared.valid)
+  const roundCount = Math.max(
+    0,
+    ...evaluable.map(
+      (item) => item.prepared.sequence!.expectedEnemyDamageByRound.length,
+    ),
+  )
+  const hasDamage = evaluable.some((item) =>
+    item.prepared.sequence!.expectedEnemyDamageByRound.some(
+      (damage) => damage > 0,
+    ),
+  )
+  const largestDamage = Math.max(
+    0,
+    ...evaluable.flatMap(
+      (item) => item.prepared.sequence!.expectedEnemyDamageByRound,
+    ),
+  )
+  // Round to a readable ceiling so every group uses a visible shared scale.
+  const chartMaximum = Math.max(1, Math.ceil((largestDamage * 1.15) / 5) * 5)
+  const chartTicks = Array.from(
+    { length: 5 },
+    (_, index) => chartMaximum - (chartMaximum / 4) * index,
+  )
+  const cumulativeDamage = evaluable.map(({ profile, prepared }) => {
+    let total = 0
+    return {
+      profile,
+      values: prepared.sequence!.expectedEnemyDamageByRound.map((damage) => {
+        total += damage
+        return total
+      }),
+    }
+  })
+  const cumulativeLargestDamage = Math.max(
+    0,
+    ...cumulativeDamage.flatMap((series) => series.values),
+  )
+  const cumulativeMaximum = Math.max(
+    1,
+    Math.ceil((cumulativeLargestDamage * 1.15) / 5) * 5,
+  )
+  const cumulativeTicks = Array.from(
+    { length: 5 },
+    (_, index) => cumulativeMaximum - (cumulativeMaximum / 4) * index,
+  )
+  const colors = ['#7156cc', '#16806c', '#d66b35', '#3971c1', '#a33c77']
+  return (
+    <section className="evaluator" aria-labelledby="evaluator-title">
+      <p className="eyebrow">Saved scenarios</p>
+      <h1 id="evaluator-title">Sequence evaluator</h1>
+      <p className="intro-copy">Compare expected damage to enemies by round.</p>
+      <div className="profile-picker">
+        <label>
+          Saved profile
+          <select
+            value={pickerId}
+            onChange={(event) => setPickerId(event.target.value)}
+          >
+            <option value="">Choose a profile</option>
+            {profiles.map((profile) => (
+              <option
+                key={profile.id}
+                value={profile.id}
+                disabled={selectedIds.includes(profile.id)}
+              >
+                {profile.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          disabled={!pickerId || selectedIds.includes(pickerId)}
+          onClick={() => {
+            setSelectedIds((current) => [...current, pickerId])
+            setPickerId('')
+          }}
+        >
+          Add profile
+        </button>
+      </div>
+      {selected.length > 0 && (
+        <div className="profile-chips" aria-label="Selected profiles">
+          {selected.map((profile) => (
+            <span className="profile-chip" key={profile.id}>
+              {profile.name}
+              <button
+                type="button"
+                aria-label={`Remove ${profile.name}`}
+                onClick={() =>
+                  setSelectedIds((ids) => ids.filter((id) => id !== profile.id))
+                }
+              >
+                <X aria-hidden="true" size={14} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {selected.length === 0 ? (
+        <p className="empty-state">
+          Select saved profiles to compare their damage.
+        </p>
+      ) : (
+        <>
+          {valid
+            .filter((item) => !item.prepared.valid)
+            .map(({ profile }) => (
+              <p className="profile-warning" key={profile.id}>
+                {profile.name} is incomplete or invalid and cannot be evaluated.
+              </p>
+            ))}
+          {evaluable.length > 0 && !hasDamage && (
+            <p className="empty-state">
+              The selected valid profiles do not deal damage to enemies.
+            </p>
+          )}
+          {hasDamage && (
+            <div
+              className="comparison-chart"
+              role="img"
+              aria-label="Expected enemy damage by round comparison"
+            >
+              <div className="chart-axis" aria-hidden="true">
+                {chartTicks.map((tick) => (
+                  <span key={tick}>{numberFormatter.format(tick)}</span>
+                ))}
+              </div>
+              <div className="chart-groups">
+                {Array.from({ length: roundCount }, (_, roundIndex) => (
+                  <div className="chart-round" key={roundIndex}>
+                    <strong>Round {roundIndex + 1}</strong>
+                    <div className="chart-bars">
+                      {evaluable.map(({ profile, prepared }, index) => {
+                        const value =
+                          prepared.sequence!.expectedEnemyDamageByRound[
+                            roundIndex
+                          ]
+                        if (value === undefined) return null
+                        return (
+                          <span
+                            className="chart-bar"
+                            key={profile.id}
+                            style={
+                              {
+                                '--bar-height': `${Math.max(3, (value / chartMaximum) * 100)}%`,
+                                '--bar-color': colors[index % colors.length],
+                              } as CSSProperties
+                            }
+                            title={`${profile.name}: ${numberFormatter.format(value)}`}
+                          >
+                            <i />
+                            <small>{numberFormatter.format(value)}</small>
+                          </span>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="chart-legend">
+                {evaluable.map(({ profile }, index) => (
+                  <span key={profile.id}>
+                    <i style={{ background: colors[index % colors.length] }} />
+                    {profile.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {evaluable.length > 0 && (
+            <table className="comparison-table">
+              <caption>Expected damage to enemies by round</caption>
+              <thead>
+                <tr>
+                  <th>Round</th>
+                  {evaluable.map(({ profile }) => (
+                    <th key={profile.id}>{profile.name}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: roundCount }, (_, index) => (
+                  <tr key={index}>
+                    <th>Round {index + 1}</th>
+                    {evaluable.map(({ profile, prepared }) => (
+                      <td key={profile.id}>
+                        {prepared.sequence!.expectedEnemyDamageByRound[
+                          index
+                        ] === undefined
+                          ? '—'
+                          : numberFormatter.format(
+                              prepared.sequence!.expectedEnemyDamageByRound[
+                                index
+                              ],
+                            )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {hasDamage && (
+            <>
+              <h2 className="comparison-heading">
+                Cumulative expected damage to enemies
+              </h2>
+              <div
+                className="comparison-chart"
+                role="img"
+                aria-label="Cumulative expected enemy damage by round comparison"
+              >
+                <div className="chart-axis" aria-hidden="true">
+                  {cumulativeTicks.map((tick) => (
+                    <span key={tick}>{numberFormatter.format(tick)}</span>
+                  ))}
+                </div>
+                <div className="chart-groups">
+                  {Array.from({ length: roundCount }, (_, roundIndex) => (
+                    <div className="chart-round" key={roundIndex}>
+                      <strong>Round {roundIndex + 1}</strong>
+                      <div className="chart-bars">
+                        {cumulativeDamage.map(({ profile, values }, index) => {
+                          const value = values[roundIndex]
+                          if (value === undefined) return null
+                          return (
+                            <span
+                              className="chart-bar"
+                              key={profile.id}
+                              style={
+                                {
+                                  '--bar-height': `${Math.max(3, (value / cumulativeMaximum) * 100)}%`,
+                                  '--bar-color': colors[index % colors.length],
+                                } as CSSProperties
+                              }
+                              title={`${profile.name}: ${numberFormatter.format(value)}`}
+                            >
+                              <i />
+                              <small>{numberFormatter.format(value)}</small>
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="chart-legend">
+                  {cumulativeDamage.map(({ profile }, index) => (
+                    <span key={profile.id}>
+                      <i
+                        style={{ background: colors[index % colors.length] }}
+                      />
+                      {profile.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <table className="comparison-table">
+                <caption>
+                  Cumulative expected damage to enemies by round
+                </caption>
+                <thead>
+                  <tr>
+                    <th>Round</th>
+                    {cumulativeDamage.map(({ profile }) => (
+                      <th key={profile.id}>{profile.name}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: roundCount }, (_, index) => (
+                    <tr key={index}>
+                      <th>Round {index + 1}</th>
+                      {cumulativeDamage.map(({ profile, values }) => (
+                        <td key={profile.id}>
+                          {values[index] === undefined
+                            ? '—'
+                            : numberFormatter.format(values[index])}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </>
+      )}
+    </section>
+  )
+}
+
 function App() {
+  const [activeTab, setActiveTab] = useState<'builder' | 'evaluator'>('builder')
+  const [profiles, setProfiles] = useState<SavedProfile[]>(loadProfiles)
+  const [loadedProfileId, setLoadedProfileId] = useState<string>()
   const [rounds, setRounds] = useState<RoundDraft[]>([
     {
       id: 'round-1',
@@ -2779,6 +3174,14 @@ function App() {
   const nextEventId = useRef(2)
   const nextDamagePoolId = useRef(1)
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profiles))
+    } catch {
+      // Storage can be unavailable (private browsing or a full quota).
+    }
+  }, [profiles])
+
   function updateState(combatant: Combatant, change: Partial<StateDraft>) {
     setStateDrafts((current) => ({
       ...current,
@@ -2786,47 +3189,14 @@ function App() {
     }))
   }
 
-  const events = rounds.flatMap((round) =>
-    round.turns.flatMap((turn) =>
-      turn.activities.flatMap((activity) => activity.events),
-    ),
-  )
-  const evaluations = new Map(
-    events.map((event) => [event.id, evaluateEvent(event)] as const),
-  )
-  const isSequenceValid = [...evaluations.values()].every(
-    (evaluation) => evaluation.config,
-  )
-  const playerStateEvaluation = stateConfigForDraft(stateDrafts.player)
-  const enemyStateEvaluation = stateConfigForDraft(stateDrafts.enemy)
-  const initialState: SequenceState | undefined =
-    playerStateEvaluation.state && enemyStateEvaluation.state
-      ? {
-          player: playerStateEvaluation.state,
-          enemy: enemyStateEvaluation.state,
-        }
-      : undefined
-  const sequence =
-    isSequenceValid && initialState
-      ? calculateSequence({
-          initialState,
-          rounds: rounds.map((round) => ({
-            id: round.id,
-            turns: round.turns.map((turn) => ({
-              id: turn.id,
-              owner: turn.owner,
-              activities: turn.activities.map((activity) => ({
-                id: activity.id,
-                type: activity.type,
-                owner: activity.owner,
-                events: activity.events.map(
-                  (event) => evaluations.get(event.id)!.config!,
-                ),
-              })),
-            })),
-          })),
-        })
-      : undefined
+  const prepared = prepareSequence({ rounds, stateDrafts })
+  const {
+    events,
+    evaluations,
+    playerStateEvaluation,
+    enemyStateEvaluation,
+    sequence,
+  } = prepared
   const shownOutcomeTypes = [
     ...new Set(
       events
@@ -2849,6 +3219,74 @@ function App() {
     const id = `event-${nextEventId.current}`
     nextEventId.current += 1
     return id
+  }
+
+  function resyncIds(draft: ScenarioDraft) {
+    const highest = (prefix: string) => {
+      const ids = [
+        ...draft.rounds.map((round) => round.id),
+        ...draft.rounds.flatMap((round) => round.turns.map((turn) => turn.id)),
+        ...draft.rounds.flatMap((round) =>
+          round.turns.flatMap((turn) =>
+            turn.activities.flatMap((activity) => [
+              activity.id,
+              ...activity.events.flatMap((event) => [
+                event.id,
+                ...event.damagePools.map((pool) => pool.id),
+              ]),
+            ]),
+          ),
+        ),
+      ]
+      return (
+        Math.max(
+          0,
+          ...ids.map(
+            (id) => Number(id.match(new RegExp(`^${prefix}-(\\d+)`))?.[1]) || 0,
+          ),
+        ) + 1
+      )
+    }
+    nextRoundId.current = highest('round')
+    nextTurnId.current = highest('turn')
+    nextActivityId.current = highest('activity')
+    nextEventId.current = highest('event')
+    nextDamagePoolId.current = highest('damage')
+  }
+
+  function saveProfile() {
+    const loaded = profiles.find((profile) => profile.id === loadedProfileId)
+    const overwrite =
+      loaded &&
+      window.confirm(
+        `Overwrite ${loaded.name}? Choose Cancel to save as a new profile.`,
+      )
+    const name = overwrite ? loaded.name : window.prompt('Profile name')?.trim()
+    if (!name) return
+    const draft = JSON.parse(
+      JSON.stringify({ rounds, stateDrafts }),
+    ) as ScenarioDraft
+    if (overwrite) {
+      setProfiles((items) =>
+        items.map((profile) =>
+          profile.id === loaded.id ? { ...profile, draft } : profile,
+        ),
+      )
+    } else {
+      const profile = { id: profileId(), name, draft }
+      setProfiles((items) => [...items, profile])
+      setLoadedProfileId(profile.id)
+    }
+  }
+
+  function loadProfile(id: string) {
+    const profile = profiles.find((item) => item.id === id)
+    if (!profile) return
+    const draft = JSON.parse(JSON.stringify(profile.draft)) as ScenarioDraft
+    setRounds(draft.rounds)
+    setStateDrafts(draft.stateDrafts)
+    resyncIds(draft)
+    setLoadedProfileId(profile.id)
   }
 
   function createPoolId() {
@@ -3231,927 +3669,1017 @@ function App() {
         <span className="status">Turn sequence</span>
       </header>
 
-      <section className="intro" aria-labelledby="page-title">
-        <div>
-          <p className="eyebrow">Dice probability workbench</p>
-          <h1 id="page-title">Build your combat timeline.</h1>
-          <p className="intro-copy">
-            Arrange rounds, turns, timeline entries, and events. Outcomes update
-            as you work.
-          </p>
-        </div>
-        <div className="totals" aria-live="polite">
-          {shownOutcomeTypes.map((type) => {
-            const outcome = sequence?.outcomes.find(
-              (item) => item.type === type,
-            )
-            const againstEnemies = type === 'expected-damage-against-enemies'
-            return (
-              <aside className="total-card" key={type}>
-                <span>
-                  Expected damage against{' '}
-                  {againstEnemies ? 'enemies' : 'players'}
-                </span>
-                <strong>
-                  {outcome === undefined
-                    ? '—'
-                    : numberFormatter.format(outcome.expectedDamage ?? 0)}
-                </strong>
-                <small>
-                  {events.length} {events.length === 1 ? 'event' : 'events'}
-                </small>
-              </aside>
-            )
-          })}
-          {shownConditionTotals.map(({ condition, target }) => {
-            const total = sequence?.expectedConditionApplications.find(
-              (item) => item.condition === condition && item.target === target,
-            )
-            return (
-              <aside
-                className="total-card condition-total"
-                key={`${condition}:${target}`}
+      <div className="app-tabs" role="tablist" aria-label="Crunch Lab views">
+        <button
+          role="tab"
+          type="button"
+          aria-selected={activeTab === 'builder'}
+          onClick={() => setActiveTab('builder')}
+        >
+          Sequence Builder
+        </button>
+        <button
+          role="tab"
+          type="button"
+          aria-selected={activeTab === 'evaluator'}
+          onClick={() => setActiveTab('evaluator')}
+        >
+          Sequence Evaluator
+        </button>
+      </div>
+
+      {activeTab === 'builder' ? (
+        <>
+          <div className="profile-actions">
+            <button type="button" onClick={saveProfile}>
+              Save profile
+            </button>
+            <label>
+              Load profile
+              <select
+                aria-label="Load profile"
+                value={loadedProfileId ?? ''}
+                onChange={(event) => loadProfile(event.target.value)}
               >
-                <span>
-                  Expected {CONDITION_LABELS[condition]} applications to{' '}
-                  {target}
-                </span>
-                <strong>
-                  {total === undefined
-                    ? '—'
-                    : numberFormatter.format(total.expectedApplications)}
-                </strong>
-                <small>Across the sequence</small>
-              </aside>
-            )
-          })}
-        </div>
-      </section>
-
-      <section className="state-panels" aria-label="Initial combatant state">
-        <CombatantStatePanel
-          combatant="player"
-          state={stateDrafts.player}
-          errors={playerStateEvaluation.errors}
-          onChange={(change) => updateState('player', change)}
-        />
-        <CombatantStatePanel
-          combatant="enemy"
-          state={stateDrafts.enemy}
-          errors={enemyStateEvaluation.errors}
-          onChange={(change) => updateState('enemy', change)}
-        />
-      </section>
-
-      <section className="workspace" aria-labelledby="sequence-title">
-        <div className="workspace-heading">
-          <div>
-            <p className="eyebrow">Sequence</p>
-            <h2 id="sequence-title">Combat timeline</h2>
+                <option value="">Choose saved profile</option>
+                {profiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-          <span className="workspace-note">
-            Rounds resolve from top to bottom
-          </span>
-        </div>
-        <p className="visually-hidden" aria-live="polite">
-          {reorderAnnouncement}
-        </p>
 
-        <div className="round-list">
-          {rounds.map((round, roundIndex) => (
-            <section
-              className="round-card"
-              aria-labelledby={`${round.id}-title`}
-              key={round.id}
-            >
-              <header className="timeline-heading round-heading">
-                <div>
-                  <p className="timeline-kicker">Round {roundIndex + 1}</p>
-                  <h3 id={`${round.id}-title`}>Round {roundIndex + 1}</h3>
-                </div>
-                <div className="event-actions">
-                  <button
-                    className="icon-button"
-                    type="button"
-                    aria-label={`Move round ${roundIndex + 1} up`}
-                    disabled={roundIndex === 0}
-                    onClick={() => moveRound(roundIndex, -1)}
+          <section className="intro" aria-labelledby="page-title">
+            <div>
+              <p className="eyebrow">Dice probability workbench</p>
+              <h1 id="page-title">Build your combat timeline.</h1>
+              <p className="intro-copy">
+                Arrange rounds, turns, timeline entries, and events. Outcomes
+                update as you work.
+              </p>
+            </div>
+            <div className="totals" aria-live="polite">
+              {shownOutcomeTypes.map((type) => {
+                const outcome = sequence?.outcomes.find(
+                  (item) => item.type === type,
+                )
+                const againstEnemies =
+                  type === 'expected-damage-against-enemies'
+                return (
+                  <aside className="total-card" key={type}>
+                    <span>
+                      Expected damage against{' '}
+                      {againstEnemies ? 'enemies' : 'players'}
+                    </span>
+                    <strong>
+                      {outcome === undefined
+                        ? '—'
+                        : numberFormatter.format(outcome.expectedDamage ?? 0)}
+                    </strong>
+                    <small>
+                      {events.length} {events.length === 1 ? 'event' : 'events'}
+                    </small>
+                  </aside>
+                )
+              })}
+              {shownConditionTotals.map(({ condition, target }) => {
+                const total = sequence?.expectedConditionApplications.find(
+                  (item) =>
+                    item.condition === condition && item.target === target,
+                )
+                return (
+                  <aside
+                    className="total-card condition-total"
+                    key={`${condition}:${target}`}
                   >
-                    <ChevronUp aria-hidden="true" size={18} />
-                  </button>
-                  <button
-                    className="icon-button"
-                    type="button"
-                    aria-label={`Move round ${roundIndex + 1} down`}
-                    disabled={roundIndex === rounds.length - 1}
-                    onClick={() => moveRound(roundIndex, 1)}
-                  >
-                    <ChevronDown aria-hidden="true" size={18} />
-                  </button>
-                  <button
-                    className="icon-button"
-                    type="button"
-                    aria-label={`Duplicate round ${roundIndex + 1}`}
-                    onClick={() => duplicateRound(roundIndex)}
-                  >
-                    <Copy aria-hidden="true" size={17} />
-                  </button>
-                  <button
-                    className="icon-button remove-event-button"
-                    type="button"
-                    aria-label={`Remove round ${roundIndex + 1}`}
-                    onClick={() =>
-                      setRounds((current) =>
-                        current.filter((item) => item.id !== round.id),
-                      )
-                    }
-                  >
-                    <Trash2 aria-hidden="true" size={18} />
-                  </button>
-                </div>
-              </header>
+                    <span>
+                      Expected {CONDITION_LABELS[condition]} applications to{' '}
+                      {target}
+                    </span>
+                    <strong>
+                      {total === undefined
+                        ? '—'
+                        : numberFormatter.format(total.expectedApplications)}
+                    </strong>
+                    <small>Across the sequence</small>
+                  </aside>
+                )
+              })}
+            </div>
+          </section>
 
-              <div className="turn-list">
-                {round.turns.map((turn, turnIndex) => (
-                  <section
-                    className={`turn-card ${turn.owner}-turn`}
-                    aria-labelledby={`${turn.id}-title`}
-                    key={turn.id}
-                  >
-                    <header className="timeline-heading turn-heading">
-                      <div>
-                        <p className="timeline-kicker">Turn {turnIndex + 1}</p>
-                        <h4 id={`${turn.id}-title`}>
-                          {turn.owner === 'player'
-                            ? 'Player turn'
-                            : 'Enemy turn'}
-                        </h4>
-                      </div>
-                      <div className="event-actions">
-                        <button
-                          className="icon-button"
-                          type="button"
-                          aria-label={`Move ${turn.owner} turn ${turnIndex + 1} up`}
-                          disabled={turnIndex === 0}
-                          onClick={() => moveTurn(round.id, turnIndex, -1)}
-                        >
-                          <ChevronUp aria-hidden="true" size={17} />
-                        </button>
-                        <button
-                          className="icon-button"
-                          type="button"
-                          aria-label={`Move ${turn.owner} turn ${turnIndex + 1} down`}
-                          disabled={turnIndex === round.turns.length - 1}
-                          onClick={() => moveTurn(round.id, turnIndex, 1)}
-                        >
-                          <ChevronDown aria-hidden="true" size={17} />
-                        </button>
-                        <button
-                          className="icon-button"
-                          type="button"
-                          aria-label={`Duplicate ${turn.owner} turn ${turnIndex + 1}`}
-                          onClick={() => duplicateTurn(round.id, turnIndex)}
-                        >
-                          <Copy aria-hidden="true" size={16} />
-                        </button>
-                        <button
-                          className="icon-button remove-event-button"
-                          type="button"
-                          aria-label={`Remove ${turn.owner} turn ${turnIndex + 1}`}
-                          onClick={() =>
-                            setRounds((current) =>
-                              current.map((item) =>
-                                item.id === round.id
-                                  ? {
-                                      ...item,
-                                      turns: item.turns.filter(
-                                        (candidate) => candidate.id !== turn.id,
-                                      ),
-                                    }
-                                  : item,
-                              ),
-                            )
-                          }
-                        >
-                          <Trash2 aria-hidden="true" size={17} />
-                        </button>
-                      </div>
-                    </header>
+          <section
+            className="state-panels"
+            aria-label="Initial combatant state"
+          >
+            <CombatantStatePanel
+              combatant="player"
+              state={stateDrafts.player}
+              errors={playerStateEvaluation.errors}
+              onChange={(change) => updateState('player', change)}
+            />
+            <CombatantStatePanel
+              combatant="enemy"
+              state={stateDrafts.enemy}
+              errors={enemyStateEvaluation.errors}
+              onChange={(change) => updateState('enemy', change)}
+            />
+          </section>
 
-                    <div className="activity-list">
-                      {turn.activities.map((activity, activityIndex) => {
-                        const path: ActivityPath = {
-                          roundId: round.id,
-                          turnId: turn.id,
-                          activityId: activity.id,
-                        }
-                        return (
-                          <section
-                            className="activity-card"
-                            aria-labelledby={`${activity.id}-title`}
-                            key={activity.id}
-                          >
-                            <header className="timeline-heading activity-heading">
-                              <div>
-                                <p className="timeline-kicker">
-                                  Activity {activityIndex + 1}
-                                </p>
-                                <h5 id={`${activity.id}-title`}>
-                                  {activity.type === 'action'
-                                    ? 'Action'
-                                    : activity.type === 'bonus-action'
-                                      ? 'Bonus action'
-                                      : 'Turn timeline'}
-                                </h5>
-                              </div>
-                              <div className="event-actions">
-                                <button
-                                  className="icon-button"
-                                  type="button"
-                                  aria-label={`Move activity ${activityIndex + 1} up`}
-                                  disabled={activityIndex === 0}
-                                  onClick={() =>
-                                    moveActivity(
-                                      round.id,
-                                      turn.id,
-                                      activityIndex,
-                                      -1,
-                                    )
-                                  }
-                                >
-                                  <ChevronUp aria-hidden="true" size={16} />
-                                </button>
-                                <button
-                                  className="icon-button"
-                                  type="button"
-                                  aria-label={`Move activity ${activityIndex + 1} down`}
-                                  disabled={
-                                    activityIndex === turn.activities.length - 1
-                                  }
-                                  onClick={() =>
-                                    moveActivity(
-                                      round.id,
-                                      turn.id,
-                                      activityIndex,
-                                      1,
-                                    )
-                                  }
-                                >
-                                  <ChevronDown aria-hidden="true" size={16} />
-                                </button>
-                                <button
-                                  className="icon-button"
-                                  type="button"
-                                  aria-label={`Duplicate activity ${activityIndex + 1}`}
-                                  onClick={() =>
-                                    duplicateActivity(
-                                      round.id,
-                                      turn.id,
-                                      activityIndex,
-                                    )
-                                  }
-                                >
-                                  <Copy aria-hidden="true" size={15} />
-                                </button>
-                                <button
-                                  className="icon-button remove-event-button"
-                                  type="button"
-                                  aria-label={`Remove activity ${activityIndex + 1}`}
-                                  onClick={() =>
-                                    setRounds((current) =>
-                                      current.map((item) =>
-                                        item.id !== round.id
-                                          ? item
-                                          : {
-                                              ...item,
-                                              turns: item.turns.map(
-                                                (candidate) =>
-                                                  candidate.id !== turn.id
-                                                    ? candidate
-                                                    : {
-                                                        ...candidate,
-                                                        activities:
-                                                          candidate.activities.filter(
-                                                            (entry) =>
-                                                              entry.id !==
-                                                              activity.id,
-                                                          ),
-                                                      },
-                                              ),
-                                            },
-                                      ),
-                                    )
-                                  }
-                                >
-                                  <Trash2 aria-hidden="true" size={16} />
-                                </button>
-                              </div>
-                            </header>
+          <section className="workspace" aria-labelledby="sequence-title">
+            <div className="workspace-heading">
+              <div>
+                <p className="eyebrow">Sequence</p>
+                <h2 id="sequence-title">Combat timeline</h2>
+              </div>
+              <span className="workspace-note">
+                Rounds resolve from top to bottom
+              </span>
+            </div>
+            <p className="visually-hidden" aria-live="polite">
+              {reorderAnnouncement}
+            </p>
 
-                            <ol className="attack-list">
-                              {activity.events.map((event, eventIndex) => {
-                                const evaluation = evaluations.get(event.id)!
-                                const result =
-                                  sequence?.eventResults[event.id] ??
-                                  evaluation.result
-                                const renderableResult = result as
-                                  RenderableEventResult | undefined
-                                const isAttack =
-                                  event.type === 'player-attack' ||
-                                  event.type === 'enemy-attack'
-                                const target =
-                                  outcomeTypeFor(event) ===
-                                  'expected-damage-against-enemies'
-                                    ? 'enemies'
-                                    : 'players'
-                                const position = eventPositions.get(event.id)!
-                                return (
-                                  <li
-                                    className={`attack-step${draggedEvent?.eventId === event.id ? ' is-dragging' : ''}${dragOverEventId === event.id && draggedEvent?.eventId !== event.id ? ' is-drag-over' : ''}`}
-                                    key={event.id}
-                                    onDragOver={(dragEvent) => {
-                                      if (
-                                        draggedEvent?.activityId !== activity.id
-                                      )
-                                        return
-                                      dragEvent.preventDefault()
-                                      dragEvent.dataTransfer.dropEffect = 'move'
-                                      setDragOverEventId(event.id)
-                                    }}
-                                    onDragLeave={() =>
-                                      setDragOverEventId((current) =>
-                                        current === event.id
-                                          ? undefined
-                                          : current,
-                                      )
-                                    }
-                                    onDrop={(dragEvent) => {
-                                      dragEvent.preventDefault()
-                                      dropEvent(path, event.id)
-                                    }}
-                                  >
-                                    <div
-                                      className="step-marker"
-                                      aria-hidden="true"
-                                    >
-                                      {eventIndex + 1}
-                                    </div>
-                                    <article
-                                      className="attack-card"
-                                      aria-labelledby={`${event.id}-title`}
-                                    >
-                                      <div className="attack-heading">
-                                        <div>
-                                          <p className="attack-kicker">
-                                            Event {eventIndex + 1}
-                                          </p>
-                                          <h6 id={`${event.id}-title`}>
-                                            {EVENT_LABELS[event.type]}
-                                          </h6>
-                                        </div>
-                                        <div className="event-actions">
-                                          <button
-                                            className="drag-handle"
-                                            type="button"
-                                            draggable
-                                            aria-label={`Drag to reorder event ${position}`}
-                                            title="Drag to reorder within this activity"
-                                            onDragStart={(dragEvent) => {
-                                              dragEvent.dataTransfer.effectAllowed =
-                                                'move'
-                                              dragEvent.dataTransfer.setData(
-                                                'text/plain',
-                                                event.id,
-                                              )
-                                              setDraggedEvent({
-                                                activityId: activity.id,
-                                                eventId: event.id,
-                                              })
-                                            }}
-                                            onDragEnd={() => {
-                                              setDraggedEvent(undefined)
-                                              setDragOverEventId(undefined)
-                                            }}
-                                          >
-                                            <GripVertical
-                                              aria-hidden="true"
-                                              size={18}
-                                            />
-                                          </button>
-                                          <button
-                                            className="icon-button"
-                                            type="button"
-                                            aria-label={`Move event ${position} up`}
-                                            disabled={eventIndex === 0}
-                                            onClick={() =>
-                                              moveEvent(
-                                                path,
-                                                eventIndex,
-                                                eventIndex - 1,
-                                              )
-                                            }
-                                          >
-                                            <ChevronUp
-                                              aria-hidden="true"
-                                              size={18}
-                                            />
-                                          </button>
-                                          <button
-                                            className="icon-button"
-                                            type="button"
-                                            aria-label={`Move event ${position} down`}
-                                            disabled={
-                                              eventIndex ===
-                                              activity.events.length - 1
-                                            }
-                                            onClick={() =>
-                                              moveEvent(
-                                                path,
-                                                eventIndex,
-                                                eventIndex + 1,
-                                              )
-                                            }
-                                          >
-                                            <ChevronDown
-                                              aria-hidden="true"
-                                              size={18}
-                                            />
-                                          </button>
-                                          <button
-                                            className="icon-button"
-                                            type="button"
-                                            aria-label={`Duplicate event ${position}`}
-                                            onClick={() =>
-                                              copyEvent(path, event.id)
-                                            }
-                                          >
-                                            <Copy
-                                              aria-hidden="true"
-                                              size={17}
-                                            />
-                                          </button>
-                                          <button
-                                            className="icon-button remove-event-button"
-                                            type="button"
-                                            aria-label={`Remove event ${position}`}
-                                            onClick={() =>
-                                              removeEvent(path, event.id)
-                                            }
-                                          >
-                                            <Trash2
-                                              aria-hidden="true"
-                                              size={18}
-                                            />
-                                          </button>
-                                        </div>
-                                      </div>
-
-                                      <div
-                                        className={
-                                          isAttack
-                                            ? 'attack-body'
-                                            : 'saving-body event-body'
-                                        }
-                                      >
-                                        {isAttack ? (
-                                          <AttackRollFields
-                                            event={event}
-                                            errors={evaluation.errors}
-                                            update={(field, value) =>
-                                              updateEvent(
-                                                path,
-                                                event.id,
-                                                field,
-                                                value,
-                                              )
-                                            }
-                                          />
-                                        ) : isSavingThrowDraft(event) ? (
-                                          <SavingThrowFields
-                                            event={event}
-                                            errors={evaluation.errors}
-                                            update={(field, value) =>
-                                              updateEvent(
-                                                path,
-                                                event.id,
-                                                field,
-                                                value,
-                                              )
-                                            }
-                                          />
-                                        ) : null}
-                                        <AbilityCheckFields
-                                          event={event}
-                                          errors={evaluation.errors}
-                                          update={(field, value) =>
-                                            updateEvent(
-                                              path,
-                                              event.id,
-                                              field,
-                                              value,
-                                            )
-                                          }
-                                        />
-                                        <InitiativeFields
-                                          event={event}
-                                          errors={evaluation.errors}
-                                          update={(field, value) =>
-                                            updateEvent(
-                                              path,
-                                              event.id,
-                                              field,
-                                              value,
-                                            )
-                                          }
-                                        />
-                                        <StateEventFields
-                                          event={event}
-                                          update={(field, value) =>
-                                            updateEvent(
-                                              path,
-                                              event.id,
-                                              field,
-                                              value,
-                                            )
-                                          }
-                                        />
-                                        <DamageFields
-                                          event={event}
-                                          errors={evaluation.errors}
-                                          update={(field, value) =>
-                                            updateEvent(
-                                              path,
-                                              event.id,
-                                              field,
-                                              value,
-                                            )
-                                          }
-                                          updatePool={(poolId, field, value) =>
-                                            updateDamagePool(
-                                              path,
-                                              event.id,
-                                              poolId,
-                                              field,
-                                              value,
-                                            )
-                                          }
-                                          addPool={() =>
-                                            addDamagePool(path, event.id)
-                                          }
-                                          removePool={(poolId) =>
-                                            removeDamagePool(
-                                              path,
-                                              event.id,
-                                              poolId,
-                                            )
-                                          }
-                                        />
-                                        <InspirationFields
-                                          event={event}
-                                          errors={evaluation.errors}
-                                          update={(field, value) =>
-                                            updateEvent(
-                                              path,
-                                              event.id,
-                                              field,
-                                              value,
-                                            )
-                                          }
-                                        />
-                                        <ConditionFields
-                                          event={event}
-                                          update={(field, value) =>
-                                            updateEvent(
-                                              path,
-                                              event.id,
-                                              field,
-                                              value,
-                                            )
-                                          }
-                                        />
-                                      </div>
-
-                                      <div
-                                        className="attack-results"
-                                        aria-live="polite"
-                                      >
-                                        <div className="event-result-metrics">
-                                          <span
-                                            className="metric-execution"
-                                            title="Execution Chance"
-                                          >
-                                            <Calculator
-                                              aria-hidden="true"
-                                              size={15}
-                                            />
-                                            Execution Chance
-                                            <strong>
-                                              {result
-                                                ? percentFormatter.format(
-                                                    result.executionProbability,
-                                                  )
-                                                : '—'}
-                                            </strong>
-                                          </span>
-                                          {event.type === 'player-initiative' ||
-                                          event.type === 'enemy-initiative' ? (
-                                            <span
-                                              className="metric-initiative"
-                                              title="Expected Initiative"
-                                            >
-                                              <Sparkles
-                                                aria-hidden="true"
-                                                size={15}
-                                              />
-                                              Expected Initiative
-                                              <strong>
-                                                {result?.outcome.type ===
-                                                'expected-initiative'
-                                                  ? numberFormatter.format(
-                                                      result.outcome
-                                                        .expectedTotal,
-                                                    )
-                                                  : '—'}
-                                              </strong>
-                                            </span>
-                                          ) : null}
-                                          <span
-                                            className="metric-success"
-                                            title={
-                                              isAttack
-                                                ? 'Hit Chance'
-                                                : 'Success Chance'
-                                            }
-                                          >
-                                            {isAttack ? (
-                                              <Swords
-                                                aria-hidden="true"
-                                                size={15}
-                                              />
-                                            ) : (
-                                              <Shield
-                                                aria-hidden="true"
-                                                size={15}
-                                              />
-                                            )}
-                                            {isAttack
-                                              ? 'Hit Chance'
-                                              : event.type ===
-                                                    'player-saving-throw' ||
-                                                  event.type ===
-                                                    'enemy-saving-throw' ||
-                                                  isAbilityCheckDraft(event)
-                                                ? 'Success Chance'
-                                                : 'Result'}
-                                            <strong>
-                                              {result &&
-                                              (isAttack ||
-                                                isSavingThrowDraft(event) ||
-                                                isAbilityCheckDraft(event))
-                                                ? percentFormatter.format(
-                                                    result.successProbability,
-                                                  )
-                                                : result?.outcome.type ===
-                                                    'no-damage'
-                                                  ? 'Completed'
-                                                  : '—'}
-                                            </strong>
-                                          </span>
-                                          {isAttack ? (
-                                            <span
-                                              className="metric-critical"
-                                              title="Critical Chance"
-                                            >
-                                              <Zap
-                                                aria-hidden="true"
-                                                size={15}
-                                              />
-                                              Critical Chance
-                                              <strong>
-                                                {result
-                                                  ? percentFormatter.format(
-                                                      result.criticalProbability ??
-                                                        0,
-                                                    )
-                                                  : '—'}
-                                              </strong>
-                                            </span>
-                                          ) : null}
-                                          {result?.outcome.type ===
-                                            'expected-damage-against-enemies' ||
-                                          result?.outcome.type ===
-                                            'expected-damage-against-players' ? (
-                                            <span
-                                              className="metric-damage"
-                                              title="Expected Damage"
-                                            >
-                                              <HeartPulse
-                                                aria-hidden="true"
-                                                size={15}
-                                              />
-                                              Expected Damage against {target}
-                                              <strong>
-                                                {numberFormatter.format(
-                                                  result.outcome.expectedDamage,
-                                                )}
-                                              </strong>
-                                            </span>
-                                          ) : result?.outcome.type ===
-                                            'no-damage' ? (
-                                            <span
-                                              className="metric-damage"
-                                              title="Damage Outcome"
-                                            >
-                                              <ShieldOff
-                                                aria-hidden="true"
-                                                size={15}
-                                              />
-                                              Damage Outcome
-                                              <strong>No Damage</strong>
-                                            </span>
-                                          ) : null}
-                                          {result?.conditionApplications.map(
-                                            (application) => (
-                                              <span
-                                                className="metric-condition"
-                                                key={application.condition}
-                                                title={`${CONDITION_LABELS[application.condition]} Applied`}
-                                              >
-                                                <ConditionIcon
-                                                  condition={
-                                                    application.condition
-                                                  }
-                                                  label={`${CONDITION_LABELS[application.condition]} Applied`}
-                                                  size={15}
-                                                />
-                                                {
-                                                  CONDITION_LABELS[
-                                                    application.condition
-                                                  ]
-                                                }{' '}
-                                                applied
-                                                <strong>
-                                                  {percentFormatter.format(
-                                                    application.probability,
-                                                  )}
-                                                </strong>
-                                              </span>
-                                            ),
-                                          )}
-                                        </div>
-                                      </div>
-                                      {renderableResult?.stateBefore &&
-                                        renderableResult.stateAfter && (
-                                          <StateTransition
-                                            before={
-                                              renderableResult.stateBefore
-                                            }
-                                            after={renderableResult.stateAfter}
-                                          />
-                                        )}
-                                    </article>
-                                  </li>
-                                )
-                              })}
-                            </ol>
-
-                            <div
-                              className={
-                                activity.events.length === 0
-                                  ? 'activity-empty'
-                                  : 'add-event'
-                              }
-                            >
-                              {activity.events.length === 0 && (
-                                <p>No events in this activity yet.</p>
-                              )}
-                              <button
-                                className="add-button"
-                                type="button"
-                                aria-expanded={
-                                  chooserActivityId === activity.id
-                                }
-                                aria-controls={`${activity.id}-event-chooser`}
-                                onClick={() =>
-                                  setChooserActivityId((current) =>
-                                    current === activity.id
-                                      ? undefined
-                                      : activity.id,
-                                  )
-                                }
-                              >
-                                {chooserActivityId === activity.id ? (
-                                  <X aria-hidden="true" size={19} />
-                                ) : (
-                                  <Plus aria-hidden="true" size={19} />
-                                )}
-                                {chooserActivityId === activity.id
-                                  ? 'Close'
-                                  : 'Add event'}
-                              </button>
-                              {chooserActivityId === activity.id && (
-                                <div
-                                  className="event-chooser"
-                                  id={`${activity.id}-event-chooser`}
-                                >
-                                  <EventTypeButtons
-                                    onSelect={(type) => addEvent(path, type)}
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          </section>
-                        )
-                      })}
+            <div className="round-list">
+              {rounds.map((round, roundIndex) => (
+                <section
+                  className="round-card"
+                  aria-labelledby={`${round.id}-title`}
+                  key={round.id}
+                >
+                  <header className="timeline-heading round-heading">
+                    <div>
+                      <p className="timeline-kicker">Round {roundIndex + 1}</p>
+                      <h3 id={`${round.id}-title`}>Round {roundIndex + 1}</h3>
                     </div>
-                    {turn.activities.length === 0 && (
-                      <p className="nested-empty">
-                        No activities in this turn yet.
-                      </p>
-                    )}
-                    <div
-                      className="nested-add-actions"
-                      aria-label={`Add activity to ${turn.owner} turn`}
-                    >
+                    <div className="event-actions">
                       <button
+                        className="icon-button"
                         type="button"
-                        onClick={() =>
-                          addActivity(round.id, turn.id, turn.owner, 'action')
-                        }
+                        aria-label={`Move round ${roundIndex + 1} up`}
+                        disabled={roundIndex === 0}
+                        onClick={() => moveRound(roundIndex, -1)}
                       >
-                        <Plus aria-hidden="true" size={16} />
-                        Add action
+                        <ChevronUp aria-hidden="true" size={18} />
                       </button>
                       <button
+                        className="icon-button"
                         type="button"
+                        aria-label={`Move round ${roundIndex + 1} down`}
+                        disabled={roundIndex === rounds.length - 1}
+                        onClick={() => moveRound(roundIndex, 1)}
+                      >
+                        <ChevronDown aria-hidden="true" size={18} />
+                      </button>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        aria-label={`Duplicate round ${roundIndex + 1}`}
+                        onClick={() => duplicateRound(roundIndex)}
+                      >
+                        <Copy aria-hidden="true" size={17} />
+                      </button>
+                      <button
+                        className="icon-button remove-event-button"
+                        type="button"
+                        aria-label={`Remove round ${roundIndex + 1}`}
                         onClick={() =>
-                          addActivity(
-                            round.id,
-                            turn.id,
-                            turn.owner,
-                            'bonus-action',
+                          setRounds((current) =>
+                            current.filter((item) => item.id !== round.id),
                           )
                         }
                       >
-                        <Plus aria-hidden="true" size={16} />
-                        Add bonus action
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          addActivity(round.id, turn.id, turn.owner, 'generic')
-                        }
-                      >
-                        <Plus aria-hidden="true" size={16} />
-                        Add turn event timeline
+                        <Trash2 aria-hidden="true" size={18} />
                       </button>
                     </div>
-                  </section>
-                ))}
-              </div>
-              {round.turns.length === 0 && (
-                <p className="nested-empty">No turns in this round yet.</p>
-              )}
-              <div
-                className="nested-add-actions"
-                aria-label={`Add turn to round ${roundIndex + 1}`}
-              >
-                <button
-                  type="button"
-                  onClick={() => addTurn(round.id, 'player')}
-                >
-                  <Plus aria-hidden="true" size={16} />
-                  Add player turn
-                </button>
-                <button
-                  type="button"
-                  onClick={() => addTurn(round.id, 'enemy')}
-                >
-                  <Plus aria-hidden="true" size={16} />
-                  Add enemy turn
-                </button>
-              </div>
-            </section>
-          ))}
-        </div>
+                  </header>
 
-        {rounds.length === 0 && (
-          <div className="empty-state">
-            <div className="empty-state-icon">
-              <Plus aria-hidden="true" size={24} />
+                  <div className="turn-list">
+                    {round.turns.map((turn, turnIndex) => (
+                      <section
+                        className={`turn-card ${turn.owner}-turn`}
+                        aria-labelledby={`${turn.id}-title`}
+                        key={turn.id}
+                      >
+                        <header className="timeline-heading turn-heading">
+                          <div>
+                            <p className="timeline-kicker">
+                              Turn {turnIndex + 1}
+                            </p>
+                            <h4 id={`${turn.id}-title`}>
+                              {turn.owner === 'player'
+                                ? 'Player turn'
+                                : 'Enemy turn'}
+                            </h4>
+                          </div>
+                          <div className="event-actions">
+                            <button
+                              className="icon-button"
+                              type="button"
+                              aria-label={`Move ${turn.owner} turn ${turnIndex + 1} up`}
+                              disabled={turnIndex === 0}
+                              onClick={() => moveTurn(round.id, turnIndex, -1)}
+                            >
+                              <ChevronUp aria-hidden="true" size={17} />
+                            </button>
+                            <button
+                              className="icon-button"
+                              type="button"
+                              aria-label={`Move ${turn.owner} turn ${turnIndex + 1} down`}
+                              disabled={turnIndex === round.turns.length - 1}
+                              onClick={() => moveTurn(round.id, turnIndex, 1)}
+                            >
+                              <ChevronDown aria-hidden="true" size={17} />
+                            </button>
+                            <button
+                              className="icon-button"
+                              type="button"
+                              aria-label={`Duplicate ${turn.owner} turn ${turnIndex + 1}`}
+                              onClick={() => duplicateTurn(round.id, turnIndex)}
+                            >
+                              <Copy aria-hidden="true" size={16} />
+                            </button>
+                            <button
+                              className="icon-button remove-event-button"
+                              type="button"
+                              aria-label={`Remove ${turn.owner} turn ${turnIndex + 1}`}
+                              onClick={() =>
+                                setRounds((current) =>
+                                  current.map((item) =>
+                                    item.id === round.id
+                                      ? {
+                                          ...item,
+                                          turns: item.turns.filter(
+                                            (candidate) =>
+                                              candidate.id !== turn.id,
+                                          ),
+                                        }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            >
+                              <Trash2 aria-hidden="true" size={17} />
+                            </button>
+                          </div>
+                        </header>
+
+                        <div className="activity-list">
+                          {turn.activities.map((activity, activityIndex) => {
+                            const path: ActivityPath = {
+                              roundId: round.id,
+                              turnId: turn.id,
+                              activityId: activity.id,
+                            }
+                            return (
+                              <section
+                                className="activity-card"
+                                aria-labelledby={`${activity.id}-title`}
+                                key={activity.id}
+                              >
+                                <header className="timeline-heading activity-heading">
+                                  <div>
+                                    <p className="timeline-kicker">
+                                      Activity {activityIndex + 1}
+                                    </p>
+                                    <h5 id={`${activity.id}-title`}>
+                                      {activity.type === 'action'
+                                        ? 'Action'
+                                        : activity.type === 'bonus-action'
+                                          ? 'Bonus action'
+                                          : 'Turn timeline'}
+                                    </h5>
+                                  </div>
+                                  <div className="event-actions">
+                                    <button
+                                      className="icon-button"
+                                      type="button"
+                                      aria-label={`Move activity ${activityIndex + 1} up`}
+                                      disabled={activityIndex === 0}
+                                      onClick={() =>
+                                        moveActivity(
+                                          round.id,
+                                          turn.id,
+                                          activityIndex,
+                                          -1,
+                                        )
+                                      }
+                                    >
+                                      <ChevronUp aria-hidden="true" size={16} />
+                                    </button>
+                                    <button
+                                      className="icon-button"
+                                      type="button"
+                                      aria-label={`Move activity ${activityIndex + 1} down`}
+                                      disabled={
+                                        activityIndex ===
+                                        turn.activities.length - 1
+                                      }
+                                      onClick={() =>
+                                        moveActivity(
+                                          round.id,
+                                          turn.id,
+                                          activityIndex,
+                                          1,
+                                        )
+                                      }
+                                    >
+                                      <ChevronDown
+                                        aria-hidden="true"
+                                        size={16}
+                                      />
+                                    </button>
+                                    <button
+                                      className="icon-button"
+                                      type="button"
+                                      aria-label={`Duplicate activity ${activityIndex + 1}`}
+                                      onClick={() =>
+                                        duplicateActivity(
+                                          round.id,
+                                          turn.id,
+                                          activityIndex,
+                                        )
+                                      }
+                                    >
+                                      <Copy aria-hidden="true" size={15} />
+                                    </button>
+                                    <button
+                                      className="icon-button remove-event-button"
+                                      type="button"
+                                      aria-label={`Remove activity ${activityIndex + 1}`}
+                                      onClick={() =>
+                                        setRounds((current) =>
+                                          current.map((item) =>
+                                            item.id !== round.id
+                                              ? item
+                                              : {
+                                                  ...item,
+                                                  turns: item.turns.map(
+                                                    (candidate) =>
+                                                      candidate.id !== turn.id
+                                                        ? candidate
+                                                        : {
+                                                            ...candidate,
+                                                            activities:
+                                                              candidate.activities.filter(
+                                                                (entry) =>
+                                                                  entry.id !==
+                                                                  activity.id,
+                                                              ),
+                                                          },
+                                                  ),
+                                                },
+                                          ),
+                                        )
+                                      }
+                                    >
+                                      <Trash2 aria-hidden="true" size={16} />
+                                    </button>
+                                  </div>
+                                </header>
+
+                                <ol className="attack-list">
+                                  {activity.events.map((event, eventIndex) => {
+                                    const evaluation = evaluations.get(
+                                      event.id,
+                                    )!
+                                    const result =
+                                      sequence?.eventResults[event.id] ??
+                                      evaluation.result
+                                    const renderableResult = result as
+                                      RenderableEventResult | undefined
+                                    const isAttack =
+                                      event.type === 'player-attack' ||
+                                      event.type === 'enemy-attack'
+                                    const target =
+                                      outcomeTypeFor(event) ===
+                                      'expected-damage-against-enemies'
+                                        ? 'enemies'
+                                        : 'players'
+                                    const position = eventPositions.get(
+                                      event.id,
+                                    )!
+                                    return (
+                                      <li
+                                        className={`attack-step${draggedEvent?.eventId === event.id ? ' is-dragging' : ''}${dragOverEventId === event.id && draggedEvent?.eventId !== event.id ? ' is-drag-over' : ''}`}
+                                        key={event.id}
+                                        onDragOver={(dragEvent) => {
+                                          if (
+                                            draggedEvent?.activityId !==
+                                            activity.id
+                                          )
+                                            return
+                                          dragEvent.preventDefault()
+                                          dragEvent.dataTransfer.dropEffect =
+                                            'move'
+                                          setDragOverEventId(event.id)
+                                        }}
+                                        onDragLeave={() =>
+                                          setDragOverEventId((current) =>
+                                            current === event.id
+                                              ? undefined
+                                              : current,
+                                          )
+                                        }
+                                        onDrop={(dragEvent) => {
+                                          dragEvent.preventDefault()
+                                          dropEvent(path, event.id)
+                                        }}
+                                      >
+                                        <div
+                                          className="step-marker"
+                                          aria-hidden="true"
+                                        >
+                                          {eventIndex + 1}
+                                        </div>
+                                        <article
+                                          className="attack-card"
+                                          aria-labelledby={`${event.id}-title`}
+                                        >
+                                          <div className="attack-heading">
+                                            <div>
+                                              <p className="attack-kicker">
+                                                Event {eventIndex + 1}
+                                              </p>
+                                              <h6 id={`${event.id}-title`}>
+                                                {EVENT_LABELS[event.type]}
+                                              </h6>
+                                            </div>
+                                            <div className="event-actions">
+                                              <button
+                                                className="drag-handle"
+                                                type="button"
+                                                draggable
+                                                aria-label={`Drag to reorder event ${position}`}
+                                                title="Drag to reorder within this activity"
+                                                onDragStart={(dragEvent) => {
+                                                  dragEvent.dataTransfer.effectAllowed =
+                                                    'move'
+                                                  dragEvent.dataTransfer.setData(
+                                                    'text/plain',
+                                                    event.id,
+                                                  )
+                                                  setDraggedEvent({
+                                                    activityId: activity.id,
+                                                    eventId: event.id,
+                                                  })
+                                                }}
+                                                onDragEnd={() => {
+                                                  setDraggedEvent(undefined)
+                                                  setDragOverEventId(undefined)
+                                                }}
+                                              >
+                                                <GripVertical
+                                                  aria-hidden="true"
+                                                  size={18}
+                                                />
+                                              </button>
+                                              <button
+                                                className="icon-button"
+                                                type="button"
+                                                aria-label={`Move event ${position} up`}
+                                                disabled={eventIndex === 0}
+                                                onClick={() =>
+                                                  moveEvent(
+                                                    path,
+                                                    eventIndex,
+                                                    eventIndex - 1,
+                                                  )
+                                                }
+                                              >
+                                                <ChevronUp
+                                                  aria-hidden="true"
+                                                  size={18}
+                                                />
+                                              </button>
+                                              <button
+                                                className="icon-button"
+                                                type="button"
+                                                aria-label={`Move event ${position} down`}
+                                                disabled={
+                                                  eventIndex ===
+                                                  activity.events.length - 1
+                                                }
+                                                onClick={() =>
+                                                  moveEvent(
+                                                    path,
+                                                    eventIndex,
+                                                    eventIndex + 1,
+                                                  )
+                                                }
+                                              >
+                                                <ChevronDown
+                                                  aria-hidden="true"
+                                                  size={18}
+                                                />
+                                              </button>
+                                              <button
+                                                className="icon-button"
+                                                type="button"
+                                                aria-label={`Duplicate event ${position}`}
+                                                onClick={() =>
+                                                  copyEvent(path, event.id)
+                                                }
+                                              >
+                                                <Copy
+                                                  aria-hidden="true"
+                                                  size={17}
+                                                />
+                                              </button>
+                                              <button
+                                                className="icon-button remove-event-button"
+                                                type="button"
+                                                aria-label={`Remove event ${position}`}
+                                                onClick={() =>
+                                                  removeEvent(path, event.id)
+                                                }
+                                              >
+                                                <Trash2
+                                                  aria-hidden="true"
+                                                  size={18}
+                                                />
+                                              </button>
+                                            </div>
+                                          </div>
+
+                                          <div
+                                            className={
+                                              isAttack
+                                                ? 'attack-body'
+                                                : 'saving-body event-body'
+                                            }
+                                          >
+                                            {isAttack ? (
+                                              <AttackRollFields
+                                                event={event}
+                                                errors={evaluation.errors}
+                                                update={(field, value) =>
+                                                  updateEvent(
+                                                    path,
+                                                    event.id,
+                                                    field,
+                                                    value,
+                                                  )
+                                                }
+                                              />
+                                            ) : isSavingThrowDraft(event) ? (
+                                              <SavingThrowFields
+                                                event={event}
+                                                errors={evaluation.errors}
+                                                update={(field, value) =>
+                                                  updateEvent(
+                                                    path,
+                                                    event.id,
+                                                    field,
+                                                    value,
+                                                  )
+                                                }
+                                              />
+                                            ) : null}
+                                            <AbilityCheckFields
+                                              event={event}
+                                              errors={evaluation.errors}
+                                              update={(field, value) =>
+                                                updateEvent(
+                                                  path,
+                                                  event.id,
+                                                  field,
+                                                  value,
+                                                )
+                                              }
+                                            />
+                                            <InitiativeFields
+                                              event={event}
+                                              errors={evaluation.errors}
+                                              update={(field, value) =>
+                                                updateEvent(
+                                                  path,
+                                                  event.id,
+                                                  field,
+                                                  value,
+                                                )
+                                              }
+                                            />
+                                            <StateEventFields
+                                              event={event}
+                                              update={(field, value) =>
+                                                updateEvent(
+                                                  path,
+                                                  event.id,
+                                                  field,
+                                                  value,
+                                                )
+                                              }
+                                            />
+                                            <DamageFields
+                                              event={event}
+                                              errors={evaluation.errors}
+                                              update={(field, value) =>
+                                                updateEvent(
+                                                  path,
+                                                  event.id,
+                                                  field,
+                                                  value,
+                                                )
+                                              }
+                                              updatePool={(
+                                                poolId,
+                                                field,
+                                                value,
+                                              ) =>
+                                                updateDamagePool(
+                                                  path,
+                                                  event.id,
+                                                  poolId,
+                                                  field,
+                                                  value,
+                                                )
+                                              }
+                                              addPool={() =>
+                                                addDamagePool(path, event.id)
+                                              }
+                                              removePool={(poolId) =>
+                                                removeDamagePool(
+                                                  path,
+                                                  event.id,
+                                                  poolId,
+                                                )
+                                              }
+                                            />
+                                            <InspirationFields
+                                              event={event}
+                                              errors={evaluation.errors}
+                                              update={(field, value) =>
+                                                updateEvent(
+                                                  path,
+                                                  event.id,
+                                                  field,
+                                                  value,
+                                                )
+                                              }
+                                            />
+                                            <ConditionFields
+                                              event={event}
+                                              update={(field, value) =>
+                                                updateEvent(
+                                                  path,
+                                                  event.id,
+                                                  field,
+                                                  value,
+                                                )
+                                              }
+                                            />
+                                          </div>
+
+                                          <div
+                                            className="attack-results"
+                                            aria-live="polite"
+                                          >
+                                            <div className="event-result-metrics">
+                                              <span
+                                                className="metric-execution"
+                                                title="Execution Chance"
+                                              >
+                                                <Calculator
+                                                  aria-hidden="true"
+                                                  size={15}
+                                                />
+                                                Execution Chance
+                                                <strong>
+                                                  {result
+                                                    ? percentFormatter.format(
+                                                        result.executionProbability,
+                                                      )
+                                                    : '—'}
+                                                </strong>
+                                              </span>
+                                              {event.type ===
+                                                'player-initiative' ||
+                                              event.type ===
+                                                'enemy-initiative' ? (
+                                                <span
+                                                  className="metric-initiative"
+                                                  title="Expected Initiative"
+                                                >
+                                                  <Sparkles
+                                                    aria-hidden="true"
+                                                    size={15}
+                                                  />
+                                                  Expected Initiative
+                                                  <strong>
+                                                    {result?.outcome.type ===
+                                                    'expected-initiative'
+                                                      ? numberFormatter.format(
+                                                          result.outcome
+                                                            .expectedTotal,
+                                                        )
+                                                      : '—'}
+                                                  </strong>
+                                                </span>
+                                              ) : null}
+                                              <span
+                                                className="metric-success"
+                                                title={
+                                                  isAttack
+                                                    ? 'Hit Chance'
+                                                    : 'Success Chance'
+                                                }
+                                              >
+                                                {isAttack ? (
+                                                  <Swords
+                                                    aria-hidden="true"
+                                                    size={15}
+                                                  />
+                                                ) : (
+                                                  <Shield
+                                                    aria-hidden="true"
+                                                    size={15}
+                                                  />
+                                                )}
+                                                {isAttack
+                                                  ? 'Hit Chance'
+                                                  : event.type ===
+                                                        'player-saving-throw' ||
+                                                      event.type ===
+                                                        'enemy-saving-throw' ||
+                                                      isAbilityCheckDraft(event)
+                                                    ? 'Success Chance'
+                                                    : 'Result'}
+                                                <strong>
+                                                  {result &&
+                                                  (isAttack ||
+                                                    isSavingThrowDraft(event) ||
+                                                    isAbilityCheckDraft(event))
+                                                    ? percentFormatter.format(
+                                                        result.successProbability,
+                                                      )
+                                                    : result?.outcome.type ===
+                                                        'no-damage'
+                                                      ? 'Completed'
+                                                      : '—'}
+                                                </strong>
+                                              </span>
+                                              {isAttack ? (
+                                                <span
+                                                  className="metric-critical"
+                                                  title="Critical Chance"
+                                                >
+                                                  <Zap
+                                                    aria-hidden="true"
+                                                    size={15}
+                                                  />
+                                                  Critical Chance
+                                                  <strong>
+                                                    {result
+                                                      ? percentFormatter.format(
+                                                          result.criticalProbability ??
+                                                            0,
+                                                        )
+                                                      : '—'}
+                                                  </strong>
+                                                </span>
+                                              ) : null}
+                                              {result?.outcome.type ===
+                                                'expected-damage-against-enemies' ||
+                                              result?.outcome.type ===
+                                                'expected-damage-against-players' ? (
+                                                <span
+                                                  className="metric-damage"
+                                                  title="Expected Damage"
+                                                >
+                                                  <HeartPulse
+                                                    aria-hidden="true"
+                                                    size={15}
+                                                  />
+                                                  Expected Damage against{' '}
+                                                  {target}
+                                                  <strong>
+                                                    {numberFormatter.format(
+                                                      result.outcome
+                                                        .expectedDamage,
+                                                    )}
+                                                  </strong>
+                                                </span>
+                                              ) : result?.outcome.type ===
+                                                'no-damage' ? (
+                                                <span
+                                                  className="metric-damage"
+                                                  title="Damage Outcome"
+                                                >
+                                                  <ShieldOff
+                                                    aria-hidden="true"
+                                                    size={15}
+                                                  />
+                                                  Damage Outcome
+                                                  <strong>No Damage</strong>
+                                                </span>
+                                              ) : null}
+                                              {result?.conditionApplications.map(
+                                                (application) => (
+                                                  <span
+                                                    className="metric-condition"
+                                                    key={application.condition}
+                                                    title={`${CONDITION_LABELS[application.condition]} Applied`}
+                                                  >
+                                                    <ConditionIcon
+                                                      condition={
+                                                        application.condition
+                                                      }
+                                                      label={`${CONDITION_LABELS[application.condition]} Applied`}
+                                                      size={15}
+                                                    />
+                                                    {
+                                                      CONDITION_LABELS[
+                                                        application.condition
+                                                      ]
+                                                    }{' '}
+                                                    applied
+                                                    <strong>
+                                                      {percentFormatter.format(
+                                                        application.probability,
+                                                      )}
+                                                    </strong>
+                                                  </span>
+                                                ),
+                                              )}
+                                            </div>
+                                          </div>
+                                          {renderableResult?.stateBefore &&
+                                            renderableResult.stateAfter && (
+                                              <StateTransition
+                                                before={
+                                                  renderableResult.stateBefore
+                                                }
+                                                after={
+                                                  renderableResult.stateAfter
+                                                }
+                                              />
+                                            )}
+                                        </article>
+                                      </li>
+                                    )
+                                  })}
+                                </ol>
+
+                                <div
+                                  className={
+                                    activity.events.length === 0
+                                      ? 'activity-empty'
+                                      : 'add-event'
+                                  }
+                                >
+                                  {activity.events.length === 0 && (
+                                    <p>No events in this activity yet.</p>
+                                  )}
+                                  <button
+                                    className="add-button"
+                                    type="button"
+                                    aria-expanded={
+                                      chooserActivityId === activity.id
+                                    }
+                                    aria-controls={`${activity.id}-event-chooser`}
+                                    onClick={() =>
+                                      setChooserActivityId((current) =>
+                                        current === activity.id
+                                          ? undefined
+                                          : activity.id,
+                                      )
+                                    }
+                                  >
+                                    {chooserActivityId === activity.id ? (
+                                      <X aria-hidden="true" size={19} />
+                                    ) : (
+                                      <Plus aria-hidden="true" size={19} />
+                                    )}
+                                    {chooserActivityId === activity.id
+                                      ? 'Close'
+                                      : 'Add event'}
+                                  </button>
+                                  {chooserActivityId === activity.id && (
+                                    <div
+                                      className="event-chooser"
+                                      id={`${activity.id}-event-chooser`}
+                                    >
+                                      <EventTypeButtons
+                                        onSelect={(type) =>
+                                          addEvent(path, type)
+                                        }
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              </section>
+                            )
+                          })}
+                        </div>
+                        {turn.activities.length === 0 && (
+                          <p className="nested-empty">
+                            No activities in this turn yet.
+                          </p>
+                        )}
+                        <div
+                          className="nested-add-actions"
+                          aria-label={`Add activity to ${turn.owner} turn`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              addActivity(
+                                round.id,
+                                turn.id,
+                                turn.owner,
+                                'action',
+                              )
+                            }
+                          >
+                            <Plus aria-hidden="true" size={16} />
+                            Add action
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              addActivity(
+                                round.id,
+                                turn.id,
+                                turn.owner,
+                                'bonus-action',
+                              )
+                            }
+                          >
+                            <Plus aria-hidden="true" size={16} />
+                            Add bonus action
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              addActivity(
+                                round.id,
+                                turn.id,
+                                turn.owner,
+                                'generic',
+                              )
+                            }
+                          >
+                            <Plus aria-hidden="true" size={16} />
+                            Add turn event timeline
+                          </button>
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                  {round.turns.length === 0 && (
+                    <p className="nested-empty">No turns in this round yet.</p>
+                  )}
+                  <div
+                    className="nested-add-actions"
+                    aria-label={`Add turn to round ${roundIndex + 1}`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => addTurn(round.id, 'player')}
+                    >
+                      <Plus aria-hidden="true" size={16} />
+                      Add player turn
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => addTurn(round.id, 'enemy')}
+                    >
+                      <Plus aria-hidden="true" size={16} />
+                      Add enemy turn
+                    </button>
+                  </div>
+                </section>
+              ))}
             </div>
-            <h3>Start your combat timeline</h3>
-            <p>Add a round, then choose its turns, activities, and events.</p>
-          </div>
-        )}
-        <div className="add-round">
-          <button className="add-button" type="button" onClick={addRound}>
-            <Plus aria-hidden="true" size={19} />
-            Add round
-          </button>
-        </div>
-      </section>
-      <GeneratedBoundaryResults results={sequence?.generatedResults ?? []} />
+
+            {rounds.length === 0 && (
+              <div className="empty-state">
+                <div className="empty-state-icon">
+                  <Plus aria-hidden="true" size={24} />
+                </div>
+                <h3>Start your combat timeline</h3>
+                <p>
+                  Add a round, then choose its turns, activities, and events.
+                </p>
+              </div>
+            )}
+            <div className="add-round">
+              <button className="add-button" type="button" onClick={addRound}>
+                <Plus aria-hidden="true" size={19} />
+                Add round
+              </button>
+            </div>
+          </section>
+          <GeneratedBoundaryResults
+            results={sequence?.generatedResults ?? []}
+          />
+        </>
+      ) : (
+        <SequenceEvaluator profiles={profiles} />
+      )}
     </main>
   )
 }
