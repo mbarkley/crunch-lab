@@ -411,8 +411,17 @@ describe('App', () => {
     const playerSave = screen.getByRole('article', {
       name: /player saving throw/i,
     })
-    expect(within(playerSave).getByLabelText(/^dc$/i)).toHaveValue(12)
-    expect(within(playerSave).getByLabelText(/^save modifier$/i)).toHaveValue(0)
+    expect(within(playerSave).getByLabelText(/^dc$/i)).toHaveValue(null)
+    expect(within(playerSave).getByLabelText(/^dc$/i)).toHaveAttribute(
+      'placeholder',
+      'Inherited',
+    )
+    expect(within(playerSave).getByLabelText(/^save modifier$/i)).toHaveValue(
+      null,
+    )
+    expect(
+      within(playerSave).getByLabelText(/^save modifier$/i),
+    ).toHaveAttribute('placeholder', 'Inherited')
     expect(
       within(playerSave).getByRole('combobox', { name: /^on failure$/i }),
     ).toHaveValue('full')
