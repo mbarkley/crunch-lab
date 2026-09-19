@@ -314,6 +314,7 @@
   margin: 0;
   border: 0;
   border-left: 1px solid #e2e6ea;
+  container-type: inline-size;
 }
 
 .damage-section legend {
@@ -337,11 +338,76 @@
 
 .damage-expression {
   display: grid;
-  grid-template-columns:
-    minmax(52px, 0.7fr) auto minmax(60px, 0.8fr) minmax(72px, 0.8fr)
-    minmax(110px, 1.3fr);
+  grid-template-columns: minmax(190px, 1.5fr) minmax(72px, 0.8fr) minmax(
+      110px,
+      1.3fr
+    );
   gap: 9px;
   align-items: end;
+}
+
+.damage-formula {
+  display: grid;
+  grid-template-columns: max-content auto minmax(60px, 1fr);
+  gap: 9px;
+  align-items: end;
+}
+
+.damage-formula .field:first-child label {
+  white-space: nowrap;
+}
+
+.damage-details {
+  display: contents;
+}
+
+/* The attack controls can leave this panel narrow even on a wide viewport.
+   Reflow the expression based on the panel's actual width, not the viewport. */
+@container (max-width: 500px) {
+  .damage-pools {
+    gap: 12px;
+  }
+
+  .damage-pool-row {
+    align-items: center;
+  }
+
+  .damage-expression {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid #e2e6ea;
+    border-radius: 10px;
+    background: #faf9ff;
+  }
+
+  .damage-formula {
+    grid-template-columns: max-content auto max-content;
+    justify-content: start;
+  }
+
+  .damage-details {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 10px;
+    align-items: end;
+  }
+
+  .damage-pool-row .pool-operator {
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
+  }
+
+  .damage-pool-row .inline-icon-button {
+    align-self: end;
+  }
+}
+
+@container (max-width: 340px) {
+  .damage-details {
+    grid-template-columns: 1fr;
+  }
 }
 
 .pool-operator {
@@ -654,10 +720,6 @@ input[aria-invalid='true'] {
 
   .roll-section input[type='number'] {
     width: 7ch;
-  }
-
-  .damage-expression {
-    grid-template-columns: minmax(58px, 1fr) auto minmax(68px, 1fr);
   }
 
   .attack-results {
@@ -1035,6 +1097,7 @@ input[aria-invalid='true'] {
 .roll-section {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
+  align-content: start;
   margin: 0;
   border: 0;
 }
@@ -1408,10 +1471,6 @@ input[aria-invalid='true'] {
   .condition-section {
     padding-right: 14px;
     padding-left: 14px;
-  }
-
-  .damage-expression {
-    grid-template-columns: minmax(52px, 1fr) auto minmax(64px, 1fr);
   }
 }
 

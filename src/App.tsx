@@ -1053,104 +1053,108 @@ function DamageFields({
                 </span>
               )}
               <div className="damage-expression">
-                <div className="field">
-                  <label htmlFor={prefix + '-' + pool.id + '-dice-count'}>
-                    Dice (1–{MAX_DAMAGE_DICE})
-                  </label>
-                  <input
-                    id={prefix + '-' + pool.id + '-dice-count'}
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    max={MAX_DAMAGE_DICE}
-                    step="1"
-                    value={pool.diceCount}
-                    aria-invalid={Boolean(poolErrors?.diceCount)}
-                    aria-describedby={
-                      poolErrors?.diceCount
-                        ? prefix + '-' + pool.id + '-dice-count-error'
-                        : undefined
-                    }
-                    onChange={(change) =>
-                      updatePool(pool.id, 'diceCount', change.target.value)
-                    }
-                  />
-                  {poolErrors?.diceCount && (
-                    <span
-                      className="field-error"
-                      id={prefix + '-' + pool.id + '-dice-count-error'}
+                <div className="damage-formula">
+                  <div className="field">
+                    <label htmlFor={prefix + '-' + pool.id + '-dice-count'}>
+                      Dice (1–{MAX_DAMAGE_DICE})
+                    </label>
+                    <input
+                      id={prefix + '-' + pool.id + '-dice-count'}
+                      type="number"
+                      inputMode="numeric"
+                      min="1"
+                      max={MAX_DAMAGE_DICE}
+                      step="1"
+                      value={pool.diceCount}
+                      aria-invalid={Boolean(poolErrors?.diceCount)}
+                      aria-describedby={
+                        poolErrors?.diceCount
+                          ? prefix + '-' + pool.id + '-dice-count-error'
+                          : undefined
+                      }
+                      onChange={(change) =>
+                        updatePool(pool.id, 'diceCount', change.target.value)
+                      }
+                    />
+                    {poolErrors?.diceCount && (
+                      <span
+                        className="field-error"
+                        id={prefix + '-' + pool.id + '-dice-count-error'}
+                      >
+                        {poolErrors.diceCount}
+                      </span>
+                    )}
+                  </div>
+                  <span className="operator" aria-hidden="true">
+                    d
+                  </span>
+                  <div className="field">
+                    <label htmlFor={prefix + '-' + pool.id + '-die-sides'}>
+                      Die Size
+                    </label>
+                    <select
+                      id={prefix + '-' + pool.id + '-die-sides'}
+                      value={pool.dieSides}
+                      onChange={(change) =>
+                        updatePool(pool.id, 'dieSides', change.target.value)
+                      }
                     >
-                      {poolErrors.diceCount}
-                    </span>
-                  )}
+                      {DAMAGE_DIE_SIDES.map((sides) => (
+                        <option key={sides} value={sides}>
+                          {sides}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <span className="operator" aria-hidden="true">
-                  d
-                </span>
-                <div className="field">
-                  <label htmlFor={prefix + '-' + pool.id + '-die-sides'}>
-                    Die Size
-                  </label>
-                  <select
-                    id={prefix + '-' + pool.id + '-die-sides'}
-                    value={pool.dieSides}
-                    onChange={(change) =>
-                      updatePool(pool.id, 'dieSides', change.target.value)
-                    }
-                  >
-                    {DAMAGE_DIE_SIDES.map((sides) => (
-                      <option key={sides} value={sides}>
-                        {sides}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="field">
-                  <label htmlFor={prefix + '-' + pool.id + '-modifier'}>
-                    Modifier
-                  </label>
-                  <input
-                    id={prefix + '-' + pool.id + '-modifier'}
-                    type="number"
-                    inputMode="numeric"
-                    step="1"
-                    value={pool.modifier}
-                    aria-invalid={Boolean(poolErrors?.modifier)}
-                    aria-describedby={
-                      poolErrors?.modifier
-                        ? prefix + '-' + pool.id + '-modifier-error'
-                        : undefined
-                    }
-                    onChange={(change) =>
-                      updatePool(pool.id, 'modifier', change.target.value)
-                    }
-                  />
-                  {poolErrors?.modifier && (
-                    <span
-                      className="field-error"
-                      id={prefix + '-' + pool.id + '-modifier-error'}
+                <div className="damage-details">
+                  <div className="field">
+                    <label htmlFor={prefix + '-' + pool.id + '-modifier'}>
+                      Modifier
+                    </label>
+                    <input
+                      id={prefix + '-' + pool.id + '-modifier'}
+                      type="number"
+                      inputMode="numeric"
+                      step="1"
+                      value={pool.modifier}
+                      aria-invalid={Boolean(poolErrors?.modifier)}
+                      aria-describedby={
+                        poolErrors?.modifier
+                          ? prefix + '-' + pool.id + '-modifier-error'
+                          : undefined
+                      }
+                      onChange={(change) =>
+                        updatePool(pool.id, 'modifier', change.target.value)
+                      }
+                    />
+                    {poolErrors?.modifier && (
+                      <span
+                        className="field-error"
+                        id={prefix + '-' + pool.id + '-modifier-error'}
+                      >
+                        {poolErrors.modifier}
+                      </span>
+                    )}
+                  </div>
+                  <div className="field">
+                    <label htmlFor={prefix + '-' + pool.id + '-damage-type'}>
+                      Damage Type
+                    </label>
+                    <select
+                      id={prefix + '-' + pool.id + '-damage-type'}
+                      value={pool.damageType}
+                      onChange={(change) =>
+                        updatePool(pool.id, 'damageType', change.target.value)
+                      }
                     >
-                      {poolErrors.modifier}
-                    </span>
-                  )}
-                </div>
-                <div className="field">
-                  <label htmlFor={prefix + '-' + pool.id + '-damage-type'}>
-                    Damage Type
-                  </label>
-                  <select
-                    id={prefix + '-' + pool.id + '-damage-type'}
-                    value={pool.damageType}
-                    onChange={(change) =>
-                      updatePool(pool.id, 'damageType', change.target.value)
-                    }
-                  >
-                    {DAMAGE_TYPES.map((type) => (
-                      <option key={type.value} value={type.value}>
-                        {type.label}
-                      </option>
-                    ))}
-                  </select>
+                      {DAMAGE_TYPES.map((type) => (
+                        <option key={type.value} value={type.value}>
+                          {type.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
               <button
