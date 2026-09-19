@@ -176,7 +176,6 @@ interface StateDraft {
   readonly conditionImmunities: readonly PersistentConditionType[]
   readonly exhaustion: string
   readonly concentration: boolean
-  readonly concentrationModifier: string
 }
 
 type EventType = EventDraft['type']
@@ -209,8 +208,6 @@ interface BaseEventDraft extends DamageDraft, InspirationDraft {
 
 interface AttackDraft extends BaseEventDraft {
   readonly type: 'player-attack' | 'enemy-attack'
-  readonly overrideArmorClass: boolean
-  readonly overrideAttackModifier: boolean
   readonly armorClass: string
   readonly attackModifier: string
   readonly rollMode: AttackRollMode
@@ -363,8 +360,6 @@ interface ActivityPath {
 }
 type EventField =
   | 'armorClass'
-  | 'overrideArmorClass'
-  | 'overrideAttackModifier'
   | 'attackModifier'
   | 'saveDc'
   | 'overrideSaveDc'
@@ -511,10 +506,8 @@ function createEvent(type: EventType, id: string): EventDraft {
     return {
       id,
       type,
-      overrideArmorClass: false,
-      overrideAttackModifier: false,
-      armorClass: '12',
-      attackModifier: '0',
+      armorClass: '',
+      attackModifier: '',
       rollMode: 'normal',
       cover: 'none',
       hitConditions: [],
@@ -813,13 +806,10 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
   if (isAttackDraft(draft)) {
     const armorClass = parseInteger(draft.armorClass)
     const attackModifier = parseInteger(draft.attackModifier)
-    if (
-      draft.overrideArmorClass &&
-      (armorClass === undefined || armorClass < 1)
-    ) {
+    if (armorClass !== undefined && armorClass < 1) {
       errors.armorClass = 'Enter a whole number of at least 1.'
     }
-    if (draft.overrideAttackModifier && attackModifier === undefined) {
+    if (draft.attackModifier !== '' && attackModifier === undefined) {
       errors.attackModifier = 'Enter a whole number.'
     }
     const heroicInspiration = inspirationPolicyFor(draft, errors)
@@ -828,10 +818,8 @@ function evaluateEvent(draft: EventDraft): EventEvaluation {
     const config: EventConfig = {
       id: draft.id,
       type: draft.type,
-      ...(draft.overrideArmorClass ? { armorClass: armorClass! } : {}),
-      ...(draft.overrideAttackModifier
-        ? { attackModifier: attackModifier! }
-        : {}),
+      ...(armorClass !== undefined ? { armorClass } : {}),
+      ...(attackModifier !== undefined ? { attackModifier } : {}),
       rollMode: draft.rollMode,
       cover: draft.cover,
       hitConditions: draft.hitConditions,
@@ -1257,17 +1245,6 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
       <Swords aria-hidden="true" size={20} />
       <div className="roll-fields">
         <div className="field">
-          <label className="checkbox-field">
-            <input
-              id={`${event.id}-override-armor-class`}
-              type="checkbox"
-              checked={event.overrideArmorClass}
-              onChange={(change) =>
-                update('overrideArmorClass', change.target.checked)
-              }
-            />
-            Armor Class Override
-          </label>
           <label htmlFor={`${event.id}-armor-class`}>Target AC</label>
           <input
             id={`${event.id}-armor-class`}
@@ -1275,16 +1252,13 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
             inputMode="numeric"
             min="1"
             step="1"
-            disabled={!event.overrideArmorClass}
             value={event.armorClass}
+            placeholder="Inherited AC"
             aria-invalid={Boolean(errors.armorClass)}
             aria-describedby={
               errors.armorClass ? `${event.id}-armor-class-error` : undefined
             }
-            onChange={(change) => {
-              update('overrideArmorClass', true)
-              update('armorClass', change.target.value)
-            }}
+            onChange={(change) => update('armorClass', change.target.value)}
           />
           {errors.armorClass && (
             <span className="field-error" id={`${event.id}-armor-class-error`}>
@@ -1293,35 +1267,21 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
           )}
         </div>
         <div className="field">
-          <label className="checkbox-field">
-            <input
-              id={`${event.id}-override-attack-modifier`}
-              type="checkbox"
-              checked={event.overrideAttackModifier}
-              onChange={(change) =>
-                update('overrideAttackModifier', change.target.checked)
-              }
-            />
-            Attack Modifier Override
-          </label>
           <label htmlFor={`${event.id}-attack-modifier`}>Attack Modifier</label>
           <input
             id={`${event.id}-attack-modifier`}
             type="number"
             inputMode="numeric"
             step="1"
-            disabled={!event.overrideAttackModifier}
             value={event.attackModifier}
+            placeholder="Inherited modifier"
             aria-invalid={Boolean(errors.attackModifier)}
             aria-describedby={
               errors.attackModifier
                 ? `${event.id}-attack-modifier-error`
                 : undefined
             }
-            onChange={(change) => {
-              update('overrideAttackModifier', true)
-              update('attackModifier', change.target.value)
-            }}
+            onChange={(change) => update('attackModifier', change.target.value)}
           />
           {errors.attackModifier && (
             <span
@@ -2020,7 +1980,6 @@ interface StateErrors {
   attackModifier?: string
   saveDc?: string
   exhaustion?: string
-  concentrationModifier?: string
 }
 
 function createStateDraft(combatant: Combatant): StateDraft {
@@ -2049,9 +2008,6 @@ function createStateDraft(combatant: Combatant): StateDraft {
     conditionImmunities: [...state.conditionImmunities],
     exhaustion: String(state.exhaustion),
     concentration: state.concentration !== null,
-    concentrationModifier: String(
-      state.concentration?.constitutionModifier ?? 0,
-    ),
   }
 }
 
@@ -2081,10 +2037,6 @@ function stateConfigForDraft(draft: StateDraft): {
   if (exhaustion === undefined || exhaustion < 0 || exhaustion > 6) {
     errors.exhaustion = 'Choose an exhaustion level from 0 through 6.'
   }
-  const concentrationModifier = parseInteger(draft.concentrationModifier)
-  if (draft.concentration && concentrationModifier === undefined) {
-    errors.concentrationModifier = 'Enter a whole number.'
-  }
   if (Object.keys(errors).length > 0) return { errors }
   return {
     errors,
@@ -2106,7 +2058,7 @@ function stateConfigForDraft(draft: StateDraft): {
       conditionImmunities: draft.conditionImmunities,
       exhaustion: exhaustion as 0 | 1 | 2 | 3 | 4 | 5 | 6,
       concentration: draft.concentration
-        ? { constitutionModifier: concentrationModifier! }
+        ? { constitutionModifier: saveModifiers.constitution! }
         : null,
     },
   }
@@ -2609,25 +2561,6 @@ function CombatantStatePanel({
           />
           Concentrating
         </label>
-        <div className="field">
-          <label htmlFor={`${stateId}-concentration-modifier`}>
-            Concentration CON Modifier
-          </label>
-          <input
-            id={`${stateId}-concentration-modifier`}
-            type="number"
-            step="1"
-            disabled={!state.concentration}
-            value={state.concentrationModifier}
-            aria-invalid={Boolean(errors.concentrationModifier)}
-            onChange={(event) =>
-              onChange({ concentrationModifier: event.target.value })
-            }
-          />
-          {errors.concentrationModifier && (
-            <span className="field-error">{errors.concentrationModifier}</span>
-          )}
-        </div>
       </div>
       <div className="state-picker-grid">
         <ConditionPicker

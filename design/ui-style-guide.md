@@ -14,11 +14,12 @@ address the same UI concern, follow the more specific rule here.
 2. **Expand dependent controls in their own row.** A toggle that introduces
    additional controls must place that group in a dedicated, full-width row
    below the original grid. It may not push the existing controls sideways.
-3. **Do not use toggles to hide one field.** Prefer a `None`/inactive option in
-   a select, or an always-visible text/number field that is disabled while
-   empty. For example, an optional override is represented by an empty numeric
-   input; its placeholder names the inherited value. A multi-field detail group
-   may still use a toggle, provided Rule 2 is followed.
+3. **Do not use toggles to gate one field.** Prefer a `None`/inactive option in
+   a select, or an always-visible, enabled text/number field. A single-value
+   optional override must support an empty state: empty means use the inherited
+   value, and the placeholder names that inherited value. Do not add a checkbox
+   solely to enable, disable, show, or hide that input. A multi-field detail
+   group may still use a toggle, provided Rule 2 is followed.
 4. **Size ordinary integer inputs for three digits.** Use the shared compact
    numeric-input class: it accommodates exactly three digits plus normal input
    padding. Do not stretch it to fill a broad grid column. Any narrower or
@@ -66,8 +67,8 @@ address the same UI concern, follow the more specific rule here.
 
 - [ ] Related controls use stable grids at desktop and narrow widths.
 - [ ] Expanding controls appear on a dedicated row without shifting siblings.
-- [ ] No toggle hides a single field where an empty input or inactive select
-      would communicate the same state.
+- [ ] No toggle gates a single field where an empty input or inactive select
+      would communicate the same state; blank optional values inherit.
 - [ ] Integer controls are compact number inputs with visible ranges; only die
       size remains a numeric dropdown.
 - [ ] Labels and select text are concise title-case noun/adjective phrases.

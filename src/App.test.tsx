@@ -27,8 +27,18 @@ describe('App', () => {
     render(<App />)
 
     const attack = screen.getByRole('article', { name: /player attack/i })
-    expect(within(attack).getByLabelText(/target ac/i)).toHaveValue(12)
-    expect(within(attack).getByLabelText(/^attack modifier$/i)).toHaveValue(0)
+    expect(within(attack).getByLabelText(/target ac/i)).toHaveValue(null)
+    expect(within(attack).getByLabelText(/target ac/i)).toHaveAttribute(
+      'placeholder',
+      'Inherited AC',
+    )
+    expect(within(attack).getByLabelText(/^attack modifier$/i)).toHaveValue(
+      null,
+    )
+    expect(within(attack).getByLabelText(/^attack modifier$/i)).toHaveAttribute(
+      'placeholder',
+      'Inherited modifier',
+    )
     expect(within(attack).getByLabelText(/roll mode/i)).toHaveValue('normal')
     expect(within(attack).getByLabelText(/^dice \(1–20\)$/i)).toHaveValue(1)
     expect(within(attack).getByLabelText(/die size/i)).toHaveValue('8')
@@ -184,8 +194,11 @@ describe('App', () => {
 
     const playerState = screen.getByRole('region', { name: 'Player state' })
     const exhaustion = within(playerState).getByLabelText(/exhaustion \(0–6\)/i)
+    const constitutionSave = within(playerState).getByLabelText('CON')
     await user.clear(exhaustion)
     await user.type(exhaustion, '6')
+    await user.clear(constitutionSave)
+    await user.type(constitutionSave, '3')
     await user.click(
       within(playerState).getByRole('checkbox', {
         name: 'Player has Heroic Inspiration',
@@ -196,12 +209,6 @@ describe('App', () => {
         name: 'Player is concentrating',
       }),
     )
-    const concentrationModifier = within(playerState).getByLabelText(
-      /concentration con modifier/i,
-    )
-    await user.clear(concentrationModifier)
-    await user.type(concentrationModifier, '3')
-
     await user.click(
       within(playerState).getByRole('button', { name: /add resistance/i }),
     )
@@ -213,7 +220,10 @@ describe('App', () => {
         name: 'Player has Heroic Inspiration',
       }),
     ).toBeChecked()
-    expect(concentrationModifier).toHaveValue(3)
+    expect(constitutionSave).toHaveValue(3)
+    expect(
+      within(playerState).queryByLabelText(/concentration con modifier/i),
+    ).not.toBeInTheDocument()
     expect(within(playerState).getByText('Fire')).toBeInTheDocument()
   })
 
@@ -246,9 +256,6 @@ describe('App', () => {
 
     const original = screen.getByRole('article', { name: /player attack/i })
     const armorClass = within(original).getByLabelText(/target ac/i)
-    await user.click(
-      within(original).getByRole('checkbox', { name: /armor class override/i }),
-    )
     await user.clear(armorClass)
     await user.type(armorClass, '17')
     await user.click(
@@ -263,7 +270,9 @@ describe('App', () => {
     const copies = screen.getAllByRole('article', { name: /player attack/i })
     expect(copies).toHaveLength(2)
     expect(within(copies[1]).getByLabelText(/target ac/i)).toHaveValue(17)
-    expect(within(copies[1]).getAllByLabelText(/^dice$/i)).toHaveLength(2)
+    expect(
+      within(copies[1]).getAllByLabelText(/^dice \(1–20\)$/i),
+    ).toHaveLength(2)
     expect(within(copies[1]).getByText('Vex')).toBeInTheDocument()
     const fieldIds = copies.flatMap((copy) =>
       [...copy.querySelectorAll('input, select')].map((field) => field.id),
@@ -314,7 +323,7 @@ describe('App', () => {
     await user.click(
       within(attack).getByRole('button', { name: /add dice pool/i }),
     )
-    const diceCounts = within(attack).getAllByLabelText(/^dice$/i)
+    const diceCounts = within(attack).getAllByLabelText(/^dice \(1–20\)$/i)
     const dieSizes = within(attack).getAllByLabelText(/die size/i)
     expect(diceCounts).toHaveLength(2)
     expect(diceCounts[1]).toHaveValue(1)
@@ -338,7 +347,7 @@ describe('App', () => {
     await user.click(
       within(attack).getByRole('button', { name: /remove damage pool 2/i }),
     )
-    expect(within(attack).getAllByLabelText(/^dice$/i)).toHaveLength(1)
+    expect(within(attack).getAllByLabelText(/^dice \(1–20\)$/i)).toHaveLength(1)
     expect(within(attack).getByText('2.25')).toBeInTheDocument()
   })
 
@@ -436,20 +445,35 @@ describe('App', () => {
 
     await addEvent(user, 'Player Attack')
     const armorClasses = screen.getAllByLabelText(/target ac/i)
-    await user.click(
-      within(screen.getAllByRole('article')[1]).getByRole('checkbox', {
-        name: /armor class override/i,
-      }),
-    )
     await user.clear(armorClasses[1])
     await user.type(armorClasses[1], '20')
 
-    expect(armorClasses[0]).toHaveValue(12)
+    expect(armorClasses[0]).toHaveValue(null)
     expect(screen.getByText('2.25')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /remove event 1/i }))
     expect(screen.getAllByRole('article')).toHaveLength(1)
     expect(screen.getByText('1 event')).toBeInTheDocument()
+  })
+
+  it('uses inherited attack values again when an override is cleared', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    const attack = screen.getByRole('article', { name: /player attack/i })
+    const armorClass = within(attack).getByLabelText(/target ac/i)
+    const attackModifier = within(attack).getByLabelText(/^attack modifier$/i)
+
+    await user.type(armorClass, '20')
+    await user.type(attackModifier, '8')
+    expect(screen.getByText('45%')).toBeInTheDocument()
+
+    await user.clear(armorClass)
+    expect(screen.getByText('85%')).toBeInTheDocument()
+    await user.clear(attackModifier)
+    expect(armorClass).toHaveValue(null)
+    expect(attackModifier).toHaveValue(null)
+    expect(screen.getByText('45%')).toBeInTheDocument()
   })
 
   it('shows validation and withholds every summary for an invalid sequence', async () => {
@@ -458,12 +482,7 @@ describe('App', () => {
 
     await addEvent(user, 'Enemy Attack')
     const armorClass = screen.getAllByLabelText(/target ac/i)[0]
-    await user.click(
-      within(screen.getAllByRole('article')[0]).getByRole('checkbox', {
-        name: /armor class override/i,
-      }),
-    )
-    await user.clear(armorClass)
+    await user.type(armorClass, '0')
 
     expect(armorClass).toHaveAttribute('aria-invalid', 'true')
     expect(
