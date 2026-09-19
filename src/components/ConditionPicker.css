@@ -12,10 +12,16 @@
 }
 
 .condition-picker-selection {
+  display: grid;
+  gap: 8px;
+}
+
+.condition-picker-chips {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+  min-height: 0;
 }
 
 .condition-picker-chip {
@@ -62,6 +68,7 @@
   font-size: 0.78rem;
   font-weight: 740;
   cursor: pointer;
+  justify-self: start;
 }
 
 .condition-picker-trigger:hover {

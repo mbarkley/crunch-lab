@@ -148,25 +148,27 @@ export function ConditionPicker<Value extends string>({
         {label}
       </span>
       <div className="condition-picker-selection">
-        {selected.map((value) => {
-          const option = optionByValue.get(value)
-          if (!option) return null
-          return (
-            <span className="condition-picker-chip" key={value}>
-              <span>{option.label}</span>
-              <button
-                type="button"
-                aria-label={
-                  removeLabel?.(option) ??
-                  `Remove ${option.label} from ${label}`
-                }
-                onClick={() => removeOption(value)}
-              >
-                <X aria-hidden="true" size={13} strokeWidth={2.4} />
-              </button>
-            </span>
-          )
-        })}
+        <div className="condition-picker-chips">
+          {selected.map((value) => {
+            const option = optionByValue.get(value)
+            if (!option) return null
+            return (
+              <span className="condition-picker-chip" key={value}>
+                <span>{option.label}</span>
+                <button
+                  type="button"
+                  aria-label={
+                    removeLabel?.(option) ??
+                    `Remove ${option.label} from ${label}`
+                  }
+                  onClick={() => removeOption(value)}
+                >
+                  <X aria-hidden="true" size={13} strokeWidth={2.4} />
+                </button>
+              </span>
+            )
+          })}
+        </div>
         <button
           className="condition-picker-trigger"
           type="button"

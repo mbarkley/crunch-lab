@@ -2,17 +2,27 @@ import {
   Calculator,
   ChevronDown,
   ChevronUp,
+  CircleMinus,
+  CirclePlay,
+  CirclePlus,
+  CircleStop,
   Copy,
   GripVertical,
+  Hand,
   HeartPulse,
   Plus,
   Shield,
+  ShieldCheck,
   ShieldOff,
   Swords,
   Sparkles,
   Trash2,
+  Unlink2,
+  Wand,
+  WandSparkles,
   X,
   Zap,
+  type LucideIcon,
 } from 'lucide-react'
 import { useRef, useState } from 'react'
 import {
@@ -62,9 +72,9 @@ const DAMAGE_CONSEQUENCES: readonly {
   value: DamageConsequence
   label: string
 }[] = [
-  { value: 'none', label: 'No damage' },
-  { value: 'half', label: 'Half damage' },
-  { value: 'full', label: 'Full damage' },
+  { value: 'none', label: 'None' },
+  { value: 'half', label: 'Half' },
+  { value: 'full', label: 'Full' },
 ]
 const ATTACK_ROLL_MODES: readonly {
   value: AttackRollMode
@@ -79,15 +89,15 @@ const SAVE_ROLL_MODES: readonly {
   label: string
 }[] = [
   ...ATTACK_ROLL_MODES,
-  { value: 'automatic-failure', label: 'Automatic failure' },
+  { value: 'automatic-failure', label: 'Automatic Failure' },
 ]
 const ABILITIES: readonly { value: Ability; label: string }[] = [
-  { value: 'strength', label: 'Strength' },
-  { value: 'dexterity', label: 'Dexterity' },
-  { value: 'constitution', label: 'Constitution' },
-  { value: 'intelligence', label: 'Intelligence' },
-  { value: 'wisdom', label: 'Wisdom' },
-  { value: 'charisma', label: 'Charisma' },
+  { value: 'strength', label: 'STR' },
+  { value: 'dexterity', label: 'DEX' },
+  { value: 'constitution', label: 'CON' },
+  { value: 'intelligence', label: 'INT' },
+  { value: 'wisdom', label: 'WIS' },
+  { value: 'charisma', label: 'CHA' },
 ]
 const COVER_OPTIONS: readonly { value: Cover; label: string }[] = [
   { value: 'none', label: 'None' },
@@ -444,25 +454,47 @@ function createDefaultInspiration(eventId: string): InspirationDraft {
 }
 
 const EVENT_LABELS: Record<EventType, string> = {
-  'player-attack': 'Player attack',
-  'enemy-attack': 'Enemy attack',
-  'player-saving-throw': 'Player saving throw',
-  'enemy-saving-throw': 'Enemy saving throw',
-  'player-ability-check': 'Player ability check',
-  'enemy-ability-check': 'Enemy ability check',
+  'player-attack': 'Player Attack',
+  'enemy-attack': 'Enemy Attack',
+  'player-saving-throw': 'Player Saving Throw',
+  'enemy-saving-throw': 'Enemy Saving Throw',
+  'player-ability-check': 'Player Ability Check',
+  'enemy-ability-check': 'Enemy Ability Check',
   'player-initiative': 'Player Initiative',
   'enemy-initiative': 'Enemy Initiative',
-  'player-damage': 'Damage to player',
-  'enemy-damage': 'Damage to enemy',
-  'apply-condition': 'Apply condition',
-  'apply-effect': 'Apply effect',
-  'remove-condition': 'Remove condition',
-  'remove-effect': 'Remove effect',
+  'player-damage': 'Damage to Player',
+  'enemy-damage': 'Damage to Enemy',
+  'apply-condition': 'Apply Condition',
+  'apply-effect': 'Apply Effect',
+  'remove-condition': 'Remove Condition',
+  'remove-effect': 'Remove Effect',
   help: 'Help',
   dodge: 'Dodge',
-  'grappled-escape': 'Grappled escape',
+  'grappled-escape': 'Grappled Escape',
   'start-concentration': 'Start Concentration',
   'stop-concentration': 'Stop Concentration',
+}
+
+const EVENT_ICONS: Record<EventType, LucideIcon> = {
+  'player-attack': Swords,
+  'enemy-attack': Swords,
+  'player-saving-throw': Shield,
+  'enemy-saving-throw': Shield,
+  'player-ability-check': Calculator,
+  'enemy-ability-check': Calculator,
+  'player-initiative': Sparkles,
+  'enemy-initiative': Sparkles,
+  'player-damage': HeartPulse,
+  'enemy-damage': HeartPulse,
+  'apply-condition': CirclePlus,
+  'apply-effect': WandSparkles,
+  'remove-condition': CircleMinus,
+  'remove-effect': Wand,
+  help: Hand,
+  dodge: ShieldCheck,
+  'grappled-escape': Unlink2,
+  'start-concentration': CirclePlay,
+  'stop-concentration': CircleStop,
 }
 
 const numberFormatter = new Intl.NumberFormat('en-US', {
@@ -1014,8 +1046,8 @@ function DamageFields({
     <fieldset className="damage-section">
       <legend>
         {event.type === 'player-attack' || event.type === 'enemy-attack'
-          ? 'Damage on hit'
-          : 'Damage roll'}
+          ? 'Damage on Hit'
+          : 'Damage Roll'}
       </legend>
       <div className="damage-pools">
         {event.damagePools.map((pool, index) => {
@@ -1063,7 +1095,7 @@ function DamageFields({
                 </span>
                 <div className="field">
                   <label htmlFor={prefix + '-' + pool.id + '-die-sides'}>
-                    Die size
+                    Die Size
                   </label>
                   <select
                     id={prefix + '-' + pool.id + '-die-sides'}
@@ -1110,7 +1142,7 @@ function DamageFields({
                 </div>
                 <div className="field">
                   <label htmlFor={prefix + '-' + pool.id + '-damage-type'}>
-                    Damage type
+                    Damage Type
                   </label>
                   <select
                     id={prefix + '-' + pool.id + '-damage-type'}
@@ -1157,7 +1189,7 @@ function InspirationFields({ event, update }: FieldProps) {
       <legend>Heroic Inspiration</legend>
       <div className="roll-fields">
         <div className="field">
-          <label htmlFor={`${event.id}-inspiration-mode`}>Reroll policy</label>
+          <label htmlFor={`${event.id}-inspiration-mode`}>Reroll Policy</label>
           <select
             id={`${event.id}-inspiration-mode`}
             value={event.heroicInspirationMode}
@@ -1165,15 +1197,15 @@ function InspirationFields({ event, update }: FieldProps) {
               update('heroicInspirationMode', change.target.value)
             }
           >
-            <option value="none">Do not spend</option>
-            <option value="d20-after-failure">Failed d20</option>
-            <option value="damage-pool-threshold">Damage die threshold</option>
+            <option value="none">Do Not Spend</option>
+            <option value="d20-after-failure">Failed D20</option>
+            <option value="damage-pool-threshold">Damage Die Threshold</option>
           </select>
         </div>
         {event.heroicInspirationMode === 'damage-pool-threshold' && (
-          <>
+          <div className="dependent-fields">
             <div className="field">
-              <label htmlFor={poolId}>Damage pool</label>
+              <label htmlFor={poolId}>Damage Pool</label>
               <select
                 id={poolId}
                 value={event.heroicInspirationPoolId}
@@ -1189,7 +1221,7 @@ function InspirationFields({ event, update }: FieldProps) {
               </select>
             </div>
             <div className="field">
-              <label htmlFor={thresholdId}>Reroll at or below</label>
+              <label htmlFor={thresholdId}>Reroll Threshold (1–20)</label>
               <input
                 id={thresholdId}
                 type="number"
@@ -1202,7 +1234,7 @@ function InspirationFields({ event, update }: FieldProps) {
                 }
               />
             </div>
-          </>
+          </div>
         )}
       </div>
     </fieldset>
@@ -1215,7 +1247,7 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
   }
   return (
     <fieldset className="roll-section attack-roll-section">
-      <legend>Attack roll</legend>
+      <legend>Attack Roll</legend>
       <Swords aria-hidden="true" size={20} />
       <div className="roll-fields">
         <div className="field">
@@ -1228,7 +1260,7 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
                 update('overrideArmorClass', change.target.checked)
               }
             />
-            Use custom AC
+            Armor Class Override
           </label>
           <label htmlFor={`${event.id}-armor-class`}>Target AC</label>
           <input
@@ -1237,6 +1269,7 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
             inputMode="numeric"
             min="1"
             step="1"
+            disabled={!event.overrideArmorClass}
             value={event.armorClass}
             aria-invalid={Boolean(errors.armorClass)}
             aria-describedby={
@@ -1263,14 +1296,15 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
                 update('overrideAttackModifier', change.target.checked)
               }
             />
-            Use custom modifier
+            Attack Modifier Override
           </label>
-          <label htmlFor={`${event.id}-attack-modifier`}>Attack modifier</label>
+          <label htmlFor={`${event.id}-attack-modifier`}>Attack Modifier</label>
           <input
             id={`${event.id}-attack-modifier`}
             type="number"
             inputMode="numeric"
             step="1"
+            disabled={!event.overrideAttackModifier}
             value={event.attackModifier}
             aria-invalid={Boolean(errors.attackModifier)}
             aria-describedby={
@@ -1293,7 +1327,7 @@ function AttackRollFields({ event, errors, update }: FieldProps) {
           )}
         </div>
         <div className="field">
-          <label htmlFor={`${event.id}-roll-mode`}>Roll mode</label>
+          <label htmlFor={`${event.id}-roll-mode`}>Roll Mode</label>
           <select
             id={`${event.id}-roll-mode`}
             value={event.rollMode}
@@ -1335,7 +1369,7 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
   return (
     <>
       <fieldset className="roll-section">
-        <legend>Saving throw</legend>
+        <legend>Saving Throw</legend>
         <Shield aria-hidden="true" size={20} />
         <div className="roll-fields">
           <div className="field">
@@ -1348,15 +1382,16 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
                   update('overrideSaveDc', change.target.checked)
                 }
               />
-              Use custom DC
+              DC Override
             </label>
-            <label htmlFor={`${event.id}-save-dc`}>Save DC</label>
+            <label htmlFor={`${event.id}-save-dc`}>DC</label>
             <input
               id={`${event.id}-save-dc`}
               type="number"
               inputMode="numeric"
               min="1"
               step="1"
+              disabled={!event.overrideSaveDc}
               value={event.saveDc}
               aria-invalid={Boolean(errors.saveDc)}
               aria-describedby={
@@ -1383,14 +1418,15 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
                   update('overrideSaveModifier', change.target.checked)
                 }
               />
-              Use custom modifier
+              Save Modifier Override
             </label>
-            <label htmlFor={`${event.id}-save-modifier`}>Save modifier</label>
+            <label htmlFor={`${event.id}-save-modifier`}>Save Modifier</label>
             <input
               id={`${event.id}-save-modifier`}
               type="number"
               inputMode="numeric"
               step="1"
+              disabled={!event.overrideSaveModifier}
               value={event.saveModifier}
               aria-invalid={Boolean(errors.saveModifier)}
               aria-describedby={
@@ -1413,7 +1449,7 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
             )}
           </div>
           <div className="field">
-            <label htmlFor={`${event.id}-save-ability`}>Save ability</label>
+            <label htmlFor={`${event.id}-save-ability`}>Ability</label>
             <select
               id={`${event.id}-save-ability`}
               value={event.saveAbility}
@@ -1427,7 +1463,7 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
             </select>
           </div>
           <div className="field">
-            <label htmlFor={`${event.id}-save-roll-mode`}>Roll mode</label>
+            <label htmlFor={`${event.id}-save-roll-mode`}>Roll Mode</label>
             <select
               id={`${event.id}-save-roll-mode`}
               value={event.rollMode}
@@ -1457,10 +1493,10 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
         </div>
       </fieldset>
       <fieldset className="consequence-section">
-        <legend>Damage consequences</legend>
+        <legend>Damage Consequences</legend>
         <div className="consequence-fields">
           <div className="field">
-            <label htmlFor={`${event.id}-failure-damage`}>On failure</label>
+            <label htmlFor={`${event.id}-failure-damage`}>On Failure</label>
             <select
               id={`${event.id}-failure-damage`}
               value={event.failureDamage}
@@ -1476,7 +1512,7 @@ function SavingThrowFields({ event, errors, update }: FieldProps) {
             </select>
           </div>
           <div className="field">
-            <label htmlFor={`${event.id}-success-damage`}>On success</label>
+            <label htmlFor={`${event.id}-success-damage`}>On Success</label>
             <select
               id={`${event.id}-success-damage`}
               value={event.successDamage}
@@ -1557,11 +1593,11 @@ function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
   if (isAttackDraft(event)) {
     return (
       <fieldset className="condition-section">
-        <legend>Conditions on hit</legend>
+        <legend>Conditions on Hit</legend>
         <ConditionChoices
           id={event.id + '-hit'}
           field="hitConditions"
-          label="Apply to target"
+          label="Target Conditions"
           selected={event.hitConditions}
           update={update}
         />
@@ -1571,7 +1607,7 @@ function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
   if (isSavingThrowDraft(event)) {
     return (
       <fieldset className="condition-section">
-        <legend>Conditions on target</legend>
+        <legend>Conditions on Target</legend>
         <div className="condition-groups">
           <ConditionChoices
             id={event.id + '-failure'}
@@ -1594,7 +1630,7 @@ function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
   if (isAbilityCheckDraft(event)) {
     return (
       <fieldset className="condition-section">
-        <legend>Conditions and removals</legend>
+        <legend>Conditions and Removals</legend>
         <div className="condition-groups">
           <ConditionChoices
             id={event.id + '-failure'}
@@ -1612,7 +1648,7 @@ function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
           />
           <ConditionRemovalChoices
             id={event.id + '-failure-removals'}
-            label="Remove on failure"
+            label="On Failure"
             selected={event.failureRemovals}
             onChange={(failureRemovals) =>
               update('failureRemovals', failureRemovals)
@@ -1620,7 +1656,7 @@ function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
           />
           <ConditionRemovalChoices
             id={event.id + '-success-removals'}
-            label="Remove on success"
+            label="On Success"
             selected={event.successRemovals}
             onChange={(successRemovals) =>
               update('successRemovals', successRemovals)
@@ -1703,7 +1739,7 @@ function StateEventFields({ event, update }: Omit<FieldProps, 'errors'>) {
   ] satisfies readonly ConditionPickerOption<ConditionType>[]
   return (
     <fieldset className="state-event-fields">
-      <legend>State change</legend>
+      <legend>State Change</legend>
       {ownerLabel &&
         (event.type === 'help' ||
           event.type === 'dodge' ||
@@ -1850,7 +1886,7 @@ function AbilityCheckFields({ event, errors, update }: FieldProps) {
           </select>
         </div>
         <div className="field">
-          <label htmlFor={`${event.id}-roll-mode`}>Roll mode</label>
+          <label htmlFor={`${event.id}-roll-mode`}>Roll Mode</label>
           <select
             id={`${event.id}-roll-mode`}
             value={event.rollMode}
@@ -1881,7 +1917,7 @@ function InitiativeFields({ event, errors, update }: FieldProps) {
     return null
   return (
     <fieldset className="roll-section">
-      <legend>Initiative roll</legend>
+      <legend>Initiative Roll</legend>
       <div className="roll-fields">
         <div className="field">
           <label htmlFor={`${event.id}-ability`}>Ability</label>
@@ -1909,7 +1945,7 @@ function InitiativeFields({ event, errors, update }: FieldProps) {
           />
         </div>
         <div className="field">
-          <label htmlFor={`${event.id}-roll-mode`}>Roll mode</label>
+          <label htmlFor={`${event.id}-roll-mode`}>Roll Mode</label>
           <select
             id={`${event.id}-roll-mode`}
             value={event.rollMode}
@@ -2156,12 +2192,14 @@ function ConditionInstanceEditor({
                 : onChange({ duration: undefined })
             }
           />
-          Has duration
+          Has Duration
         </label>
         {duration && (
-          <>
+          <div className="condition-instance-dependent-fields">
             <div className="field">
-              <label htmlFor={`${condition.id}-duration`}>Duration turns</label>
+              <label htmlFor={`${condition.id}-duration`}>
+                Duration (Turns)
+              </label>
               <input
                 id={`${condition.id}-duration`}
                 type="number"
@@ -2174,9 +2212,7 @@ function ConditionInstanceEditor({
               />
             </div>
             <div className="field">
-              <label htmlFor={`${condition.id}-turn-owner`}>
-                Counted turn owner
-              </label>
+              <label htmlFor={`${condition.id}-turn-owner`}>Turn Owner</label>
               <select
                 id={`${condition.id}-turn-owner`}
                 value={duration.turnOwner}
@@ -2190,7 +2226,7 @@ function ConditionInstanceEditor({
             </div>
             <div className="field">
               <label htmlFor={`${condition.id}-boundary`}>
-                Expiry boundary
+                Expiry Boundary
               </label>
               <select
                 id={`${condition.id}-boundary`}
@@ -2201,13 +2237,13 @@ function ConditionInstanceEditor({
                   })
                 }
               >
-                <option value="start">Start of turn</option>
-                <option value="end">End of turn</option>
+                <option value="start">Start of Turn</option>
+                <option value="end">End of Turn</option>
               </select>
             </div>
             <div className="field">
               <label htmlFor={`${condition.id}-trigger`}>
-                Boundary trigger
+                Boundary Trigger
               </label>
               <select
                 id={`${condition.id}-trigger`}
@@ -2215,15 +2251,15 @@ function ConditionInstanceEditor({
                 onChange={(event) => updateTrigger(event.target.value)}
               >
                 <option value="none">None</option>
-                <option value="repeated-save">Repeated save</option>
-                <option value="ongoing-damage">Ongoing damage</option>
+                <option value="repeated-save">Repeated Save</option>
+                <option value="ongoing-damage">Ongoing Damage</option>
               </select>
             </div>
             {trigger === 'repeated-save' && duration.repeatedSave && (
               <>
                 <div className="field">
                   <label htmlFor={`${condition.id}-save-ability`}>
-                    Repeated save ability
+                    Repeated Save Ability
                   </label>
                   <select
                     id={`${condition.id}-save-ability`}
@@ -2246,7 +2282,7 @@ function ConditionInstanceEditor({
                 </div>
                 <div className="field">
                   <label htmlFor={`${condition.id}-save-dc`}>
-                    Repeated save DC
+                    Repeated Save DC
                   </label>
                   <input
                     id={`${condition.id}-save-dc`}
@@ -2266,7 +2302,7 @@ function ConditionInstanceEditor({
                 </div>
                 <div className="field">
                   <label htmlFor={`${condition.id}-save-modifier`}>
-                    Repeated save modifier
+                    Repeated Save Modifier
                   </label>
                   <input
                     id={`${condition.id}-save-modifier`}
@@ -2289,7 +2325,7 @@ function ConditionInstanceEditor({
               <>
                 <div className="field">
                   <label htmlFor={`${condition.id}-ongoing-type`}>
-                    Ongoing damage type
+                    Ongoing Damage Type
                   </label>
                   <select
                     id={`${condition.id}-ongoing-type`}
@@ -2312,7 +2348,7 @@ function ConditionInstanceEditor({
                 </div>
                 <div className="field">
                   <label htmlFor={`${condition.id}-ongoing-dice`}>
-                    Ongoing damage dice
+                    Ongoing Damage Dice
                   </label>
                   <input
                     id={`${condition.id}-ongoing-dice`}
@@ -2332,7 +2368,7 @@ function ConditionInstanceEditor({
                 </div>
                 <div className="field">
                   <label htmlFor={`${condition.id}-ongoing-sides`}>
-                    Ongoing die size
+                    Ongoing Die Size
                   </label>
                   <select
                     id={`${condition.id}-ongoing-sides`}
@@ -2355,7 +2391,7 @@ function ConditionInstanceEditor({
                 </div>
                 <div className="field">
                   <label htmlFor={`${condition.id}-ongoing-modifier`}>
-                    Ongoing damage modifier
+                    Ongoing Damage Modifier
                   </label>
                   <input
                     id={`${condition.id}-ongoing-modifier`}
@@ -2374,7 +2410,7 @@ function ConditionInstanceEditor({
                 </div>
               </>
             )}
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -2443,7 +2479,7 @@ function CombatantStatePanel({
       </div>
       <div className="state-toggle-grid">
         <div className="field">
-          <label htmlFor={`${stateId}-armor-class`}>Armor class</label>
+          <label htmlFor={`${stateId}-armor-class`}>Armor Class</label>
           <input
             id={`${stateId}-armor-class`}
             type="number"
@@ -2454,7 +2490,7 @@ function CombatantStatePanel({
           />
         </div>
         <div className="field">
-          <label htmlFor={`${stateId}-attack-modifier`}>Attack modifier</label>
+          <label htmlFor={`${stateId}-attack-modifier`}>Attack Modifier</label>
           <input
             id={`${stateId}-attack-modifier`}
             type="number"
@@ -2466,7 +2502,7 @@ function CombatantStatePanel({
           />
         </div>
         <div className="field">
-          <label htmlFor={`${stateId}-save-dc`}>Save DC</label>
+          <label htmlFor={`${stateId}-save-dc`}>DC</label>
           <input
             id={`${stateId}-save-dc`}
             type="number"
@@ -2479,7 +2515,7 @@ function CombatantStatePanel({
         {ABILITIES.map((ability) => (
           <div className="field" key={ability.value}>
             <label htmlFor={`${stateId}-save-${ability.value}`}>
-              {ability.label} save modifier
+              {ability.label} Modifier
             </label>
             <input
               id={`${stateId}-save-${ability.value}`}
@@ -2506,24 +2542,22 @@ function CombatantStatePanel({
           />
           Help
         </label>
-        {state.helped && (
-          <div className="field">
-            <label htmlFor={`${stateId}-help-source`}>Help source</label>
-            <select
-              id={`${stateId}-help-source`}
-              value={
-                state.helpSource ??
-                (combatant === 'player' ? 'enemy' : 'player')
-              }
-              onChange={(event) =>
-                onChange({ helpSource: event.target.value as Combatant })
-              }
-            >
-              <option value="player">Player</option>
-              <option value="enemy">Enemy</option>
-            </select>
-          </div>
-        )}
+        <div className="field">
+          <label htmlFor={`${stateId}-help-source`}>Help Source</label>
+          <select
+            id={`${stateId}-help-source`}
+            disabled={!state.helped}
+            value={
+              state.helpSource ?? (combatant === 'player' ? 'enemy' : 'player')
+            }
+            onChange={(event) =>
+              onChange({ helpSource: event.target.value as Combatant })
+            }
+          >
+            <option value="player">Player</option>
+            <option value="enemy">Enemy</option>
+          </select>
+        </div>
         <label className="checkbox-field">
           <input
             type="checkbox"
@@ -2538,19 +2572,17 @@ function CombatantStatePanel({
       </div>
       <div className="state-field-grid">
         <div className="field">
-          <label htmlFor={`${stateId}-exhaustion`}>Exhaustion level</label>
-          <select
+          <label htmlFor={`${stateId}-exhaustion`}>Exhaustion (0–6)</label>
+          <input
             id={`${stateId}-exhaustion`}
+            type="number"
+            min="0"
+            max="6"
+            step="1"
             value={state.exhaustion}
             aria-invalid={Boolean(errors.exhaustion)}
             onChange={(event) => onChange({ exhaustion: event.target.value })}
-          >
-            {[0, 1, 2, 3, 4, 5, 6].map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
+          />
           {errors.exhaustion && (
             <span className="field-error">{errors.exhaustion}</span>
           )}
@@ -2566,28 +2598,25 @@ function CombatantStatePanel({
           />
           Concentrating
         </label>
-        {state.concentration && (
-          <div className="field">
-            <label htmlFor={`${stateId}-concentration-modifier`}>
-              Concentration Constitution modifier
-            </label>
-            <input
-              id={`${stateId}-concentration-modifier`}
-              type="number"
-              step="1"
-              value={state.concentrationModifier}
-              aria-invalid={Boolean(errors.concentrationModifier)}
-              onChange={(event) =>
-                onChange({ concentrationModifier: event.target.value })
-              }
-            />
-            {errors.concentrationModifier && (
-              <span className="field-error">
-                {errors.concentrationModifier}
-              </span>
-            )}
-          </div>
-        )}
+        <div className="field">
+          <label htmlFor={`${stateId}-concentration-modifier`}>
+            Concentration CON Modifier
+          </label>
+          <input
+            id={`${stateId}-concentration-modifier`}
+            type="number"
+            step="1"
+            disabled={!state.concentration}
+            value={state.concentrationModifier}
+            aria-invalid={Boolean(errors.concentrationModifier)}
+            onChange={(event) =>
+              onChange({ concentrationModifier: event.target.value })
+            }
+          />
+          {errors.concentrationModifier && (
+            <span className="field-error">{errors.concentrationModifier}</span>
+          )}
+        </div>
       </div>
       <div className="state-picker-grid">
         <ConditionPicker
@@ -2611,7 +2640,7 @@ function CombatantStatePanel({
         </div>
         <ConditionPicker
           id={`${stateId}-condition-immunities`}
-          label="Condition immunities"
+          label="Condition Immunities"
           options={CONDITION_IMMUNITY_OPTIONS}
           selected={state.conditionImmunities}
           onChange={(conditionImmunities) => onChange({ conditionImmunities })}
@@ -2619,7 +2648,7 @@ function CombatantStatePanel({
         />
         <ConditionPicker
           id={`${stateId}-damage-immunities`}
-          label="Damage immunities"
+          label="Damage Immunities"
           options={DAMAGE_TYPE_OPTIONS}
           selected={state.damageImmunities}
           onChange={(damageImmunities) => onChange({ damageImmunities })}
@@ -2627,7 +2656,7 @@ function CombatantStatePanel({
         />
         <ConditionPicker
           id={`${stateId}-damage-resistances`}
-          label="Damage resistances"
+          label="Damage Resistances"
           options={DAMAGE_TYPE_OPTIONS}
           selected={state.damageResistances}
           onChange={(damageResistances) => onChange({ damageResistances })}
@@ -2635,7 +2664,7 @@ function CombatantStatePanel({
         />
         <ConditionPicker
           id={`${stateId}-damage-vulnerabilities`}
-          label="Damage vulnerabilities"
+          label="Damage Vulnerabilities"
           options={DAMAGE_TYPE_OPTIONS}
           selected={state.damageVulnerabilities}
           onChange={(damageVulnerabilities) =>
@@ -2653,16 +2682,15 @@ function EventTypeButtons({
 }: {
   onSelect: (type: EventType) => void
 }) {
-  return (Object.keys(EVENT_LABELS) as EventType[]).map((type) => (
-    <button key={type} type="button" onClick={() => onSelect(type)}>
-      {type.includes('attack') ? (
-        <Swords aria-hidden="true" size={18} />
-      ) : (
-        <Shield aria-hidden="true" size={18} />
-      )}
-      {EVENT_LABELS[type]}
-    </button>
-  ))
+  return (Object.keys(EVENT_LABELS) as EventType[]).map((type) => {
+    const Icon = EVENT_ICONS[type]
+    return (
+      <button key={type} type="button" onClick={() => onSelect(type)}>
+        <Icon aria-hidden="true" size={18} />
+        {EVENT_LABELS[type]}
+      </button>
+    )
+  })
 }
 
 const GENERATED_RESULT_LABELS: Record<GeneratedBoundaryResult['type'], string> =
@@ -2708,7 +2736,7 @@ function GeneratedBoundaryResults({
               </h3>
               <div className="attack-results" aria-live="polite">
                 <span>
-                  Execution chance
+                  Execution Chance
                   <strong>
                     {percentFormatter.format(
                       generated.result.executionProbability,
@@ -2716,7 +2744,7 @@ function GeneratedBoundaryResults({
                   </strong>
                 </span>
                 <span>
-                  Success chance
+                  Success Chance
                   <strong>
                     {percentFormatter.format(
                       generated.result.successProbability,
@@ -2725,7 +2753,7 @@ function GeneratedBoundaryResults({
                 </span>
                 {outcome.type === 'expected-initiative' ? (
                   <span>
-                    Expected initiative
+                    Expected Initiative
                     <strong>
                       {numberFormatter.format(outcome.expectedTotal)}
                     </strong>
@@ -2733,15 +2761,15 @@ function GeneratedBoundaryResults({
                 ) : outcome.type === 'expected-damage-against-enemies' ||
                   outcome.type === 'expected-damage-against-players' ? (
                   <span>
-                    Expected damage
+                    Expected Damage
                     <strong>
                       {numberFormatter.format(outcome.expectedDamage)}
                     </strong>
                   </span>
                 ) : (
                   <span>
-                    Damage outcome
-                    <strong>No damage</strong>
+                    Damage Outcome
+                    <strong>No Damage</strong>
                   </span>
                 )}
               </div>
@@ -3860,12 +3888,15 @@ function App() {
                                         aria-live="polite"
                                       >
                                         <div className="event-result-metrics">
-                                          <span className="metric-execution">
+                                          <span
+                                            className="metric-execution"
+                                            title="Execution Chance"
+                                          >
                                             <Calculator
                                               aria-hidden="true"
                                               size={15}
                                             />
-                                            Execution chance
+                                            Execution Chance
                                             <strong>
                                               {result
                                                 ? percentFormatter.format(
@@ -3876,12 +3907,15 @@ function App() {
                                           </span>
                                           {event.type === 'player-initiative' ||
                                           event.type === 'enemy-initiative' ? (
-                                            <span className="metric-initiative">
+                                            <span
+                                              className="metric-initiative"
+                                              title="Expected Initiative"
+                                            >
                                               <Sparkles
                                                 aria-hidden="true"
                                                 size={15}
                                               />
-                                              Expected initiative
+                                              Expected Initiative
                                               <strong>
                                                 {result?.outcome.type ===
                                                 'expected-initiative'
@@ -3893,7 +3927,14 @@ function App() {
                                               </strong>
                                             </span>
                                           ) : null}
-                                          <span className="metric-success">
+                                          <span
+                                            className="metric-success"
+                                            title={
+                                              isAttack
+                                                ? 'Hit Chance'
+                                                : 'Success Chance'
+                                            }
+                                          >
                                             {isAttack ? (
                                               <Swords
                                                 aria-hidden="true"
@@ -3906,13 +3947,13 @@ function App() {
                                               />
                                             )}
                                             {isAttack
-                                              ? 'Hit chance'
+                                              ? 'Hit Chance'
                                               : event.type ===
                                                     'player-saving-throw' ||
                                                   event.type ===
                                                     'enemy-saving-throw' ||
                                                   isAbilityCheckDraft(event)
-                                                ? 'Success chance'
+                                                ? 'Success Chance'
                                                 : 'Result'}
                                             <strong>
                                               {result &&
@@ -3929,12 +3970,15 @@ function App() {
                                             </strong>
                                           </span>
                                           {isAttack ? (
-                                            <span className="metric-critical">
+                                            <span
+                                              className="metric-critical"
+                                              title="Critical Chance"
+                                            >
                                               <Zap
                                                 aria-hidden="true"
                                                 size={15}
                                               />
-                                              Critical chance
+                                              Critical Chance
                                               <strong>
                                                 {result
                                                   ? percentFormatter.format(
@@ -3949,12 +3993,15 @@ function App() {
                                             'expected-damage-against-enemies' ||
                                           result?.outcome.type ===
                                             'expected-damage-against-players' ? (
-                                            <span className="metric-damage">
+                                            <span
+                                              className="metric-damage"
+                                              title="Expected Damage"
+                                            >
                                               <HeartPulse
                                                 aria-hidden="true"
                                                 size={15}
                                               />
-                                              Expected damage against {target}
+                                              Expected Damage against {target}
                                               <strong>
                                                 {numberFormatter.format(
                                                   result.outcome.expectedDamage,
@@ -3963,13 +4010,16 @@ function App() {
                                             </span>
                                           ) : result?.outcome.type ===
                                             'no-damage' ? (
-                                            <span className="metric-damage">
+                                            <span
+                                              className="metric-damage"
+                                              title="Damage Outcome"
+                                            >
                                               <ShieldOff
                                                 aria-hidden="true"
                                                 size={15}
                                               />
-                                              Damage outcome
-                                              <strong>No damage</strong>
+                                              Damage Outcome
+                                              <strong>No Damage</strong>
                                             </span>
                                           ) : null}
                                           {result?.conditionApplications.map(
@@ -3977,11 +4027,13 @@ function App() {
                                               <span
                                                 className="metric-condition"
                                                 key={application.condition}
+                                                title={`${CONDITION_LABELS[application.condition]} Applied`}
                                               >
                                                 <ConditionIcon
                                                   condition={
                                                     application.condition
                                                   }
+                                                  label={`${CONDITION_LABELS[application.condition]} Applied`}
                                                   size={15}
                                                 />
                                                 {

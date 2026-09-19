@@ -49,12 +49,14 @@ export function ConditionIcon({
 }) {
   const Icon = CONDITION_ICONS[condition]
   return (
-    <Icon
-      aria-hidden={label === undefined}
-      aria-label={label}
-      role={label ? 'img' : undefined}
-      size={size}
-      strokeWidth={2.1}
-    />
+    <span title={label}>
+      <Icon
+        aria-hidden={label === undefined}
+        aria-label={label}
+        role={label ? 'img' : undefined}
+        size={size}
+        strokeWidth={2.1}
+      />
+    </span>
   )
 }

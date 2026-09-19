@@ -294,10 +294,10 @@
   font-weight: 740;
 }
 
-.roll-section input {
+.roll-section input[type='number'] {
   grid-column: 3;
   grid-row: 1;
-  width: 76px;
+  width: 7ch;
 }
 
 .roll-suffix {
@@ -437,6 +437,14 @@ select {
   color: #26323e;
   font: inherit;
   font-weight: 670;
+}
+
+/* Ordinary integer controls are intentionally compact: three digits plus
+   standard horizontal padding keeps form grids stable while leaving labels
+   readable. */
+input[type='number'] {
+  width: 7ch;
+  min-width: 7ch;
 }
 
 input:hover,
@@ -644,8 +652,8 @@ input[aria-invalid='true'] {
     grid-template-columns: auto minmax(0, 1fr) 68px;
   }
 
-  .roll-section input {
-    width: 68px;
+  .roll-section input[type='number'] {
+    width: 7ch;
   }
 
   .damage-expression {
@@ -1017,7 +1025,7 @@ input[aria-invalid='true'] {
   font-weight: 740;
 }
 
-.roll-section input {
+.roll-section input:not([type='number']) {
   width: 100%;
 }
 
@@ -1025,6 +1033,27 @@ input[aria-invalid='true'] {
 .consequence-fields {
   display: grid;
   gap: 10px;
+}
+
+.dependent-fields {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.condition-instance-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.condition-instance-dependent-fields {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  padding-top: 2px;
 }
 
 .roll-fields {
