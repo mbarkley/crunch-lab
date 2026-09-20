@@ -43,13 +43,15 @@ Read `README.md` before changing product behavior.
 Before handing off a change, run:
 
 ```sh
-npm test
-npm run lint
-npm run build
-npm run format:check
+npx --yes -p node@24 node /usr/bin/npm test
+npx --yes -p node@24 node /usr/bin/npm run lint
+npx --yes -p node@24 node /usr/bin/npm run build
+npx --yes -p node@24 node /usr/bin/npm run format:check
 ```
 
-All four commands must pass. The project requires Node 24 and npm.
+All four commands must pass. The project requires Node 24 and npm. When the
+system Node is not version 24, use the `npx --yes -p node@24 node /usr/bin/npm ...`
+form above so the npm CLI and project scripts run under Node 24.
 
 ## Documentation and version control
 

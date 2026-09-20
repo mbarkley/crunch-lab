@@ -411,8 +411,78 @@ interface EvaluatorCalculationState {
 }
 
 const PROFILE_STORAGE_KEY = 'crunch-lab.scenario-profiles.v1'
+const TUTORIAL_STORAGE_KEY = 'crunch-lab.tutorial-dismissed.v1'
 const PROFILE_EXPORT_FORMAT = 'crunch-lab-profile'
 const PROFILE_EXPORT_VERSION = 1
+
+const TUTORIAL_STEPS = [
+  {
+    target: 'state-panels',
+    title: 'Player and enemy state',
+    body: 'Crunch Lab models one player character and one enemy NPC. Configure reusable modifiers, DCs, defenses, and conditions here so they do not need to be repeated for every event.',
+    placement: 'bottom',
+  },
+  {
+    target: 'combat-timeline',
+    title: 'Combat timeline',
+    body: 'Build a sequence of rounds, turns, actions, and other events. Crunch Lab calculates and summarizes possible damage and condition outcomes.',
+    placement: 'bottom',
+  },
+  {
+    target: 'first-add-event',
+    title: 'Add event',
+    body: 'Add attacks, saving throws, and other events here. Actions, bonus actions, and unrelated events can be separated within each turn.',
+    placement: 'top',
+  },
+  {
+    target: 'first-event-conditions',
+    title: 'Add condition',
+    body: 'Attacks and saving throws can apply conditions. Crunch Lab calculates their probability and interactions; for example, Vex gives the next attack against that enemy advantage.',
+    placement: 'right',
+  },
+  {
+    target: 'first-execution-chance',
+    title: 'Execution Chance',
+    body: 'Conditions can prevent a character from taking actions or bonus actions. This metric shows the probability that the event actually executes.',
+    placement: 'right',
+  },
+  {
+    target: 'first-sequence-condition',
+    title: 'Add sequence condition',
+    body: 'Advanced scenarios can make an activity or event conditional on required or absent conditions.',
+    placement: 'bottom',
+  },
+  {
+    target: 'representative-action-controls',
+    title: 'Reorder and manage items',
+    body: 'Rounds, turns, activities, and events can be copied, moved with the arrows, or deleted using their action controls.',
+    placement: 'left',
+  },
+  {
+    target: 'save-profile',
+    title: 'Save profile',
+    body: 'Save a sequence as a named profile for later. Named profiles can be compared in the Sequence Evaluator tab.',
+    placement: 'bottom',
+  },
+] as const
+
+type TutorialStep = (typeof TUTORIAL_STEPS)[number]
+
+function tutorialWasDismissed() {
+  try {
+    return window.localStorage.getItem(TUTORIAL_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function dismissTutorial() {
+  try {
+    window.localStorage.setItem(TUTORIAL_STORAGE_KEY, 'true')
+  } catch {
+    // Storage can be unavailable (private browsing or a full quota).
+  }
+}
 
 interface ProfileExport {
   readonly format: typeof PROFILE_EXPORT_FORMAT
@@ -1975,7 +2045,10 @@ function ConditionChoices({
 function ConditionFields({ event, update }: Omit<FieldProps, 'errors'>) {
   if (isAttackDraft(event)) {
     return (
-      <fieldset className="condition-section">
+      <fieldset
+        className="condition-section"
+        data-tour="first-event-conditions"
+      >
         <legend>Conditions on Hit</legend>
         <ConditionChoices
           id={event.id + '-hit'}
@@ -3942,6 +4015,10 @@ function SequenceEvaluator({
 
 function App() {
   const [activeTab, setActiveTab] = useState<'builder' | 'evaluator'>('builder')
+  const [tutorialStep, setTutorialStep] = useState<number | undefined>(() =>
+    tutorialWasDismissed() ? undefined : 0,
+  )
+  const tutorialButtonRef = useRef<HTMLButtonElement>(null)
   const [profiles, setProfiles] = useState<SavedProfile[]>(loadProfiles)
   const [loadedProfileId, setLoadedProfileId] = useState<string>()
   const [profileTransferMessage, setProfileTransferMessage] = useState('')
@@ -4005,6 +4082,20 @@ function App() {
     'idle' | 'updating' | 'invalid' | 'error'
   >('updating')
   const workerAvailable = typeof Worker !== 'undefined'
+
+  function closeTutorial() {
+    setTutorialStep(undefined)
+    dismissTutorial()
+  }
+
+  function startTutorial() {
+    setActiveTab('builder')
+    setTutorialStep(0)
+  }
+
+  useEffect(() => {
+    if (tutorialStep === undefined) tutorialButtonRef.current?.focus()
+  }, [tutorialStep])
 
   useEffect(() => {
     if (!workerAvailable) return
@@ -4641,6 +4732,215 @@ function App() {
     )
   }
 
+  /* eslint-disable react-hooks/static-components */
+  function Tutorial({
+    stepIndex,
+    onStepChange,
+    onClose,
+  }: {
+    stepIndex: number
+    onStepChange: (index: number) => void
+    onClose: () => void
+  }) {
+    const step: TutorialStep = TUTORIAL_STEPS[stepIndex]
+    const popupRef = useRef<HTMLDivElement>(null)
+    const [targetRect, setTargetRect] = useState<DOMRect | undefined>()
+    const [popupPosition, setPopupPosition] = useState<
+      { top: number; left: number } | undefined
+    >()
+
+    useEffect(() => {
+      const target = document.querySelector<HTMLElement>(
+        `[data-tour="${step.target}"]`,
+      )
+      if (!target) return
+      target.scrollIntoView?.({
+        block: 'center',
+        inline: 'nearest',
+      })
+
+      const updateRect = () => setTargetRect(target.getBoundingClientRect())
+      updateRect()
+      window.addEventListener('resize', updateRect)
+      window.addEventListener('scroll', updateRect, true)
+      return () => {
+        window.removeEventListener('resize', updateRect)
+        window.removeEventListener('scroll', updateRect, true)
+      }
+    }, [step.target])
+
+    useEffect(() => {
+      const updatePopupPosition = () => {
+        if (!targetRect || !popupRef.current) return
+        const popup = popupRef.current.getBoundingClientRect()
+        const width = popup.width || 360
+        const height = popup.height
+        const margin = 16
+        const gap = 24
+        const candidates = [
+          step.placement,
+          ...(['bottom', 'right', 'left', 'top'] as const).filter(
+            (placement) => placement !== step.placement,
+          ),
+        ]
+
+        const candidatePosition = (placement: TutorialStep['placement']) => {
+          if (placement === 'bottom') {
+            return {
+              top: targetRect.bottom + gap,
+              left: targetRect.left + targetRect.width / 2 - width / 2,
+            }
+          }
+          if (placement === 'top') {
+            return {
+              top: targetRect.top - height - gap,
+              left: targetRect.left + targetRect.width / 2 - width / 2,
+            }
+          }
+          if (placement === 'right') {
+            return {
+              top: targetRect.top + targetRect.height / 2 - height / 2,
+              left: targetRect.right + gap,
+            }
+          }
+          return {
+            top: targetRect.top + targetRect.height / 2 - height / 2,
+            left: targetRect.left - width - gap,
+          }
+        }
+
+        const fits = (position: { top: number; left: number }) => {
+          const right = position.left + width
+          const bottom = position.top + height
+          const overlapsTarget = !(
+            right <= targetRect.left - gap ||
+            position.left >= targetRect.right + gap ||
+            bottom <= targetRect.top - gap ||
+            position.top >= targetRect.bottom + gap
+          )
+          return (
+            !overlapsTarget &&
+            position.left >= margin &&
+            right <= window.innerWidth - margin &&
+            position.top >= margin &&
+            bottom <= window.innerHeight - margin
+          )
+        }
+
+        const positionedCandidates = candidates.map((placement) => ({
+          placement,
+          position: candidatePosition(placement),
+        }))
+        const separatedFromTarget = positionedCandidates.find(
+          ({ placement, position }) => {
+            if (placement === 'left' || placement === 'right') {
+              return (
+                position.left >= margin &&
+                position.left + width <= window.innerWidth - margin
+              )
+            }
+            return (
+              position.top >= margin &&
+              position.top + height <= window.innerHeight - margin
+            )
+          },
+        )
+        const preferred =
+          positionedCandidates.find(({ position }) => fits(position))
+            ?.position ??
+          separatedFromTarget?.position ??
+          candidatePosition('right')
+        setPopupPosition({
+          top: Math.max(
+            margin,
+            Math.min(preferred.top, window.innerHeight - height - margin),
+          ),
+          left: Math.max(
+            margin,
+            Math.min(preferred.left, window.innerWidth - width - margin),
+          ),
+        })
+      }
+
+      updatePopupPosition()
+      window.addEventListener('resize', updatePopupPosition)
+      return () => window.removeEventListener('resize', updatePopupPosition)
+    }, [step.placement, targetRect])
+
+    useEffect(() => {
+      popupRef.current?.focus()
+    }, [stepIndex])
+
+    useEffect(() => {
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          onClose()
+        }
+      }
+      document.addEventListener('keydown', handleKeyDown)
+      return () => document.removeEventListener('keydown', handleKeyDown)
+    }, [onClose])
+
+    const next = () => {
+      if (stepIndex === TUTORIAL_STEPS.length - 1) {
+        onClose()
+      } else {
+        onStepChange(stepIndex + 1)
+      }
+    }
+
+    const tutorialLayerStyle = targetRect
+      ? ({
+          '--tutorial-target-top': `${targetRect.top}px`,
+          '--tutorial-target-left': `${targetRect.left}px`,
+          '--tutorial-target-width': `${targetRect.width}px`,
+          '--tutorial-target-height': `${targetRect.height}px`,
+        } as CSSProperties)
+      : undefined
+    const popupInlineStyle = popupPosition
+      ? ({
+          top: `${popupPosition.top}px`,
+          left: `${popupPosition.left}px`,
+          transform: 'none',
+        } as CSSProperties)
+      : undefined
+
+    return (
+      <div className="tutorial-layer" style={tutorialLayerStyle}>
+        {targetRect && (
+          <div className="tutorial-spotlight" aria-hidden="true" />
+        )}
+        <div
+          className={`tutorial-popup tutorial-popup-${step.placement}`}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tutorial-title"
+          aria-describedby="tutorial-body"
+          tabIndex={-1}
+          ref={popupRef}
+          style={popupInlineStyle}
+        >
+          <div
+            className="tutorial-progress"
+            aria-label={`Step ${stepIndex + 1} of ${TUTORIAL_STEPS.length}`}
+          >
+            Step {stepIndex + 1} of {TUTORIAL_STEPS.length}
+          </div>
+          <h2 id="tutorial-title">{step.title}</h2>
+          <p id="tutorial-body">{step.body}</p>
+          <div className="tutorial-actions">
+            <button type="button" onClick={next}>
+              {stepIndex === TUTORIAL_STEPS.length - 1 ? 'Done' : 'Next'}
+            </button>
+            <button type="button" className="tutorial-skip" onClick={onClose}>
+              Skip all
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
     <main className="app-shell">
       <header className="masthead">
@@ -4648,7 +4948,18 @@ function App() {
           <Calculator aria-hidden="true" size={24} />
           <span>Crunch Lab</span>
         </div>
-        <span className="status">Turn sequence</span>
+        <div className="masthead-actions">
+          <button
+            type="button"
+            className="tutorial-replay-button"
+            ref={tutorialButtonRef}
+            aria-label="Replay tutorial"
+            onClick={startTutorial}
+          >
+            Tutorial
+          </button>
+          <span className="status">Turn sequence</span>
+        </div>
       </header>
 
       <div className="app-tabs" role="tablist" aria-label="Crunch Lab views">
@@ -4673,7 +4984,11 @@ function App() {
       {activeTab === 'builder' ? (
         <>
           <div className="profile-actions">
-            <button type="button" onClick={saveProfile}>
+            <button
+              type="button"
+              data-tour="save-profile"
+              onClick={saveProfile}
+            >
               Save profile
             </button>
             <label>
@@ -4791,6 +5106,7 @@ function App() {
           <section
             className="state-panels"
             aria-label="Initial combatant state"
+            data-tour="state-panels"
           >
             <CombatantStatePanel
               combatant="player"
@@ -4810,6 +5126,7 @@ function App() {
             className={`workspace${calculationStatus === 'updating' ? ' is-updating' : ''}`}
             aria-labelledby="sequence-title"
             aria-busy={calculationStatus === 'updating'}
+            data-tour="combat-timeline"
           >
             <div className="workspace-heading">
               <div>
@@ -4898,7 +5215,14 @@ function App() {
                                 : 'Enemy turn'}
                             </h4>
                           </div>
-                          <div className="event-actions">
+                          <div
+                            className="event-actions"
+                            data-tour={
+                              roundIndex === 0 && turnIndex === 0
+                                ? 'representative-action-controls'
+                                : undefined
+                            }
+                          >
                             <button
                               className="icon-button"
                               type="button"
@@ -4990,6 +5314,13 @@ function App() {
                                         <button
                                           type="button"
                                           className="condition-gate-button"
+                                          data-tour={
+                                            roundIndex === 0 &&
+                                            turnIndex === 0 &&
+                                            activityIndex === 0
+                                              ? 'first-sequence-condition'
+                                              : undefined
+                                          }
                                           onClick={() =>
                                             setConditionEditor({
                                               kind: 'activity',
@@ -5502,7 +5833,14 @@ function App() {
                                             <div className="event-result-metrics">
                                               <span
                                                 className="metric-execution"
-                                                title="Execution Chance"
+                                                data-tour={
+                                                  roundIndex === 0 &&
+                                                  turnIndex === 0 &&
+                                                  activityIndex === 0 &&
+                                                  eventIndex === 0
+                                                    ? 'first-execution-chance'
+                                                    : undefined
+                                                }
                                               >
                                                 <Calculator
                                                   aria-hidden="true"
@@ -5698,6 +6036,13 @@ function App() {
                                   <button
                                     className="add-button"
                                     type="button"
+                                    data-tour={
+                                      roundIndex === 0 &&
+                                      turnIndex === 0 &&
+                                      activityIndex === 0
+                                        ? 'first-add-event'
+                                        : undefined
+                                    }
                                     aria-expanded={
                                       chooserActivityId === activity.id
                                     }
@@ -5849,8 +6194,16 @@ function App() {
           onClose={() => setConditionEditor(undefined)}
         />
       )}
+      {tutorialStep !== undefined && (
+        <Tutorial
+          stepIndex={tutorialStep}
+          onStepChange={setTutorialStep}
+          onClose={closeTutorial}
+        />
+      )}
     </main>
   )
+  /* eslint-enable react-hooks/static-components */
 }
 
 export default App

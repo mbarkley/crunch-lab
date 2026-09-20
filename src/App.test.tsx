@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
 async function addEvent(
@@ -23,9 +23,56 @@ async function addCondition(
 }
 
 describe('App', () => {
+  beforeEach(() => {
+    window.localStorage.setItem('crunch-lab.tutorial-dismissed.v1', 'true')
+  })
+
   afterEach(() => {
+    window.localStorage.removeItem('crunch-lab.tutorial-dismissed.v1')
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  it('guides new users through the tutorial and supports replay', async () => {
+    const user = userEvent.setup()
+    window.localStorage.removeItem('crunch-lab.tutorial-dismissed.v1')
+    render(<App />)
+
+    expect(
+      await screen.findByRole('dialog', { name: /player and enemy state/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Step 1 of 8')).toBeInTheDocument()
+
+    for (let step = 1; step < 8; step += 1) {
+      await user.click(screen.getByRole('button', { name: 'Next' }))
+      expect(screen.getByText(`Step ${step + 1} of 8`)).toBeInTheDocument()
+    }
+    await user.click(screen.getByRole('button', { name: 'Done' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(
+      window.localStorage.getItem('crunch-lab.tutorial-dismissed.v1'),
+    ).toBe('true')
+
+    await user.click(screen.getByRole('button', { name: /tutorial/i }))
+    expect(
+      screen.getByRole('dialog', { name: /player and enemy state/i }),
+    ).toBeInTheDocument()
+  })
+
+  it('skips and dismisses the tutorial with Escape', async () => {
+    const user = userEvent.setup()
+    window.localStorage.removeItem('crunch-lab.tutorial-dismissed.v1')
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: 'Skip all' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(
+      window.localStorage.getItem('crunch-lab.tutorial-dismissed.v1'),
+    ).toBe('true')
+
+    await user.click(screen.getByRole('button', { name: /tutorial/i }))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /tutorial/i })).toHaveFocus()
   })
 
   it('debounces worker calculations and ignores obsolete worker results', () => {
