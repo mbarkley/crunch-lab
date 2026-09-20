@@ -12,7 +12,7 @@ Crunch Lab is a browser-only React and TypeScript application built with Vite. I
 - `src/App.css` and `src/index.css` contain the custom styling.
 - `design/guided-sequence-mockup.html` is a visual reference, not application code.
 
-Read `README.md` before changing product behavior. Its “Deferred” section identifies features that are intentionally out of scope.
+Read `README.md` before changing product behavior.
 
 ## Implementation conventions
 
